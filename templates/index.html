@@ -1,0 +1,58 @@
+{{define "title"}}Кейсы{{end}}
+
+{{define "case-list"}}
+{{range .}}
+<a class="card {{.Kind}}" href="/cases/{{.ID}}">
+  <div class="card-title">{{.Title}}</div>
+  <div class="chips">{{if .Category}}<span>{{.Category}}</span>{{end}}<span>период: {{.Horizon}}</span></div>
+  <div class="prob-row">
+    <span class="prob-base">{{percent .Base}}</span> →
+    <span class="prob-now">{{percent .Current}}</span>
+    {{if .Improved}}<span class="badge good">{{printf "%+.1f" .DeltaPoints}} п.п.</span>
+    {{else if ne .DeltaPoints 0.0}}<span class="badge bad">{{printf "%+.1f" .DeltaPoints}} п.п.</span>
+    {{else}}<span class="badge flat">без изменений</span>{{end}}
+  </div>
+  <div class="progress">
+    <div class="progress-label"><span>Выполнено действий</span><span>{{.DoneCount}} из {{.TotalCount}}</span></div>
+    <div class="bar"><span style="width:{{.ProgressPercent}}%"></span></div>
+  </div>
+</a>
+{{end}}
+{{end}}
+
+{{define "content"}}
+<div class="page-head">
+  <h1>Мои кейсы</h1>
+</div>
+
+<details class="panel">
+  <summary>Новый кейс</summary>
+  <form class="grid" method="post" action="/cases">
+    <label>Название <input name="title" required></label>
+    <label>Тип
+      <select name="kind">
+        <option value="risk">Риск</option>
+        <option value="aspiration">Стремление</option>
+      </select>
+    </label>
+    <label>Категория <input name="category" placeholder="здоровье, деньги…"></label>
+    <label>Период <input name="horizon" placeholder="5 лет" required></label>
+    <label>Базовая вероятность, % <input name="base_probability" placeholder="8" required></label>
+    <label>Откуда цифра <input name="base_source"></label>
+    <div><button class="primary">Создать</button></div>
+  </form>
+</details>
+
+<div class="columns">
+  <section>
+    <h2 class="col-title"><span class="dot risk"></span>Риски <span class="count">снижаем</span></h2>
+    {{if .Risks}}{{template "case-list" .Risks}}
+    {{else}}<div class="empty">Рисков пока нет.<br>Добавь первый через «Новый кейс».</div>{{end}}
+  </section>
+  <section>
+    <h2 class="col-title"><span class="dot aspiration"></span>Стремления <span class="count">повышаем</span></h2>
+    {{if .Aspirations}}{{template "case-list" .Aspirations}}
+    {{else}}<div class="empty">Стремлений пока нет.<br>Добавь первое через «Новый кейс».</div>{{end}}
+  </section>
+</div>
+{{end}}

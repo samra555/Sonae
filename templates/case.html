@@ -1,0 +1,229 @@
+{{define "title"}}{{.Case.Title}}{{end}}
+
+{{define "content"}}
+<p><a href="/">← Все кейсы</a></p>
+{{template "case-body" .}}
+
+<section class="panel static-panel">
+  <h2>Оценка нейросетью</h2>
+  <ol class="steps">
+    <li>Нажми «Сформировать промпт» и скопируй текст.</li>
+    <li>Вставь его в нейросеть и дождись JSON-ответа.</li>
+    <li>Вставь ответ в поле ниже, проверь превью и примени нужные строки.</li>
+  </ol>
+  <button class="primary" hx-get="/cases/{{.Case.ID}}/prompt" hx-target="#prompt-box">Сформировать промпт</button>
+  <div id="prompt-box"></div>
+
+  <h2 style="margin-top:20px">Ответ нейросети</h2>
+  <form hx-post="/cases/{{.Case.ID}}/import" hx-target="#import-result">
+    <textarea name="reply" rows="8" placeholder="Вставь сюда JSON-ответ"></textarea>
+    <p><button>Проверить ответ</button></p>
+  </form>
+  <div id="import-result"></div>
+</section>
+{{end}}
+
+{{define "case-body"}}
+<div id="case-body">
+  <div class="case-head">
+    <div class="chips">
+      <span>{{if eq .Case.Kind "risk"}}Риск{{else}}Стремление{{end}}</span>
+      {{if .Case.Category}}<span>{{.Case.Category}}</span>{{end}}
+      <span>период: {{.Case.Horizon}}</span>
+    </div>
+    <h1>{{.Case.Title}}</h1>
+    <div class="prob-row">
+      <span class="prob-base">{{percent .Case.BaseProbability}}</span> →
+      <span class="prob-now">{{percent .Current}}</span>
+      {{if .Case.Improved}}<span class="badge good">{{printf "%+.1f" .Case.DeltaPoints}} п.п.</span>
+      {{else if ne .Case.DeltaPoints 0.0}}<span class="badge bad">{{printf "%+.1f" .Case.DeltaPoints}} п.п.</span>
+      {{else}}<span class="badge flat">без изменений</span>{{end}}
+    </div>
+    <div class="muted">база: {{if .Case.BaseSource}}{{.Case.BaseSource}}{{else}}источник не указан{{end}}</div>
+    <div class="progress">
+      <div class="progress-label"><span>Выполнено действий</span><span>{{.Case.DoneCount}} из {{len .Actions}}</span></div>
+      <div class="bar"><span style="width:{{.Case.ProgressPercent}}%"></span></div>
+    </div>
+  </div>
+
+  {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
+
+  <div class="actions-title"><h2>Действия</h2><span class="muted">сверху те, что сильнее всего двигают вероятность в нужную сторону</span></div>
+  {{range .Actions}}
+  {{$actionID := .ID}}
+  <div class="action {{if .Done}}done{{end}} {{if .Blocked}}blocked{{end}}">
+    <div>
+      <input type="checkbox"
+             hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/toggle"
+             hx-target="#case-body" hx-swap="outerHTML"
+             {{if .Done}}checked{{end}} {{if .Blocked}}disabled{{end}}>
+    </div>
+    <div>
+      <div class="action-title">{{.Title}}<code>{{.ID}}</code></div>
+      {{if not .MyMultiplier}}<div class="chips"><span>нет оценки: задай «Мою прикидку»</span></div>{{end}}
+      {{if .BlockReason}}<div class="hint">🔒 {{.BlockReason}}</div>{{end}}
+      {{if .OverlapTitles}}<div class="hint warn">⚠ пересекается: {{join .OverlapTitles ", "}}</div>{{end}}
+      {{if .LLMPercent}}
+      <div class="hint">🤖 нейросеть: {{pctLabel .LLMPercent}}{{if .Confidence}} · {{.Confidence}}{{end}}
+        {{if .CanAccept}}
+        <form class="link-add" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/accept" hx-target="#case-body" hx-swap="outerHTML">
+          <button class="mini">Принять как мою</button>
+        </form>
+        {{end}}
+      </div>
+      {{end}}
+
+      <details class="inline-details"><summary>изменить</summary>
+        <form class="grid edit-form" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/update" hx-target="#case-body" hx-swap="outerHTML">
+          <label>Название <input name="title" value="{{.Title}}" required></label>
+          <label>Моя прикидка, %
+            <input name="effect_percent" value="{{optNum .MyPercent}}" placeholder="−10"
+                   data-base="{{$.Case.BaseProbability}}" oninput="previewEffect(this)">
+          </label>
+          <div><button class="primary">Сохранить</button></div>
+          <div class="preview" style="grid-column:1/-1"></div>
+        </form>
+        <div class="hint">Во сколько процентов действие меняет вероятность: −10 снижает на 10%, +30 повышает на 30%. Пусто: оценки нет.</div>
+
+        <div class="links">
+          <div class="link-row">
+            <span class="muted">Сначала нужно выполнить:</span>
+            {{range .RequiresChips}}
+            <span class="chip-link">{{.Title}}
+              <form hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/links" hx-target="#case-body" hx-swap="outerHTML">
+                <input type="hidden" name="kind" value="requires"><input type="hidden" name="op" value="remove">
+                <input type="hidden" name="target" value="{{.ID}}"><button title="убрать связь">✕</button>
+              </form>
+            </span>
+            {{end}}
+            {{if .RequiresOptions}}
+            <form class="link-add" hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/links" hx-target="#case-body" hx-swap="outerHTML">
+              <input type="hidden" name="kind" value="requires"><input type="hidden" name="op" value="add">
+              <select name="target"><option value="">выбери действие…</option>
+                {{range .RequiresOptions}}<optgroup label="{{.Title}}">{{range .Actions}}<option value="{{.ID}}">{{.Title}}</option>{{end}}</optgroup>{{end}}
+              </select>
+              <button class="mini">Добавить</button>
+            </form>
+            {{end}}
+          </div>
+          <div class="link-row">
+            <span class="muted">Нельзя вместе с:</span>
+            {{range .ExcludesChips}}
+            <span class="chip-link">{{.Title}}
+              <form hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/links" hx-target="#case-body" hx-swap="outerHTML">
+                <input type="hidden" name="kind" value="excludes"><input type="hidden" name="op" value="remove">
+                <input type="hidden" name="target" value="{{.ID}}"><button title="убрать связь">✕</button>
+              </form>
+            </span>
+            {{end}}
+            {{if .ExcludesOptions}}
+            <form class="link-add" hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/links" hx-target="#case-body" hx-swap="outerHTML">
+              <input type="hidden" name="kind" value="excludes"><input type="hidden" name="op" value="add">
+              <select name="target"><option value="">выбери действие…</option>
+                {{range .ExcludesOptions}}<optgroup label="{{.Title}}">{{range .Actions}}<option value="{{.ID}}">{{.Title}}</option>{{end}}</optgroup>{{end}}
+              </select>
+              <button class="mini">Добавить</button>
+            </form>
+            {{end}}
+          </div>
+        </div>
+
+        <p><button class="danger" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/delete" hx-confirm="Удалить действие?"
+                hx-target="#case-body" hx-swap="outerHTML">Удалить действие</button></p>
+      </details>
+
+      {{if or .Reasoning .Sources}}
+      <details class="inline-details"><summary>обоснование нейросети</summary>
+        <div class="hint">{{.Reasoning}}</div>
+        {{range .Sources}}<div class="hint">· {{.}}</div>{{end}}
+      </details>
+      {{end}}
+    </div>
+    <div class="effect">
+      <div class="mult">{{pctLabel .MyPercent}}</div>
+      {{if .DeltaPoints}}<span class="badge {{if .Good}}good{{else}}bad{{end}}">{{deltaPoints .DeltaPoints}}</span>{{end}}
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">Действий пока нет. Добавь первое ниже.</div>
+  {{end}}
+
+  <details class="panel">
+    <summary>Добавить действие</summary>
+    <form class="grid" hx-post="/cases/{{.Case.ID}}/actions" hx-target="#case-body" hx-swap="outerHTML">
+      <label>Действие <input name="title" required></label>
+      <label>Моя прикидка, %
+        <input name="effect_percent" placeholder="−10" data-base="{{.Case.BaseProbability}}" oninput="previewEffect(this)">
+      </label>
+      <div><button class="primary">Добавить</button></div>
+      <div class="preview" style="grid-column:1/-1"></div>
+    </form>
+    <div class="hint">−10 снижает вероятность на 10%, +30 повышает на 30%. Связи с другими действиями задаются позже, в «изменить».</div>
+  </details>
+
+  <details class="panel">
+    <summary>Изменить кейс</summary>
+    <form class="grid" hx-post="/cases/{{.Case.ID}}/update" hx-target="#case-body" hx-swap="outerHTML">
+      <label>Название <input name="title" value="{{.Case.Title}}" required></label>
+      <label>Тип
+        <select name="kind">
+          <option value="risk" {{if eq .Case.Kind "risk"}}selected{{end}}>Риск</option>
+          <option value="aspiration" {{if eq .Case.Kind "aspiration"}}selected{{end}}>Стремление</option>
+        </select>
+      </label>
+      <label>Категория <input name="category" value="{{.Case.Category}}"></label>
+      <label>Период <input name="horizon" value="{{.Case.Horizon}}" required></label>
+      <label>База, % <input name="base_probability" value="{{percentValue .Case.BaseProbability}}" required></label>
+      <label>Откуда цифра <input name="base_source" value="{{.Case.BaseSource}}"></label>
+      <div><button class="primary">Сохранить</button></div>
+    </form>
+    <button class="danger" hx-post="/cases/{{.Case.ID}}/delete" hx-confirm="Удалить кейс вместе со всеми действиями?"
+            hx-target="#case-body" hx-swap="outerHTML">Удалить кейс</button>
+  </details>
+</div>
+{{end}}
+
+{{define "prompt-box"}}
+<p class="muted">Промпт готов: скопируй и вставь в нейросеть.</p>
+<textarea id="prompt-text" rows="12" readonly>{{.Prompt}}</textarea>
+<p><button class="primary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('prompt-text').value);this.textContent='Скопировано ✓'">Копировать</button></p>
+{{end}}
+
+{{define "import-preview"}}
+{{if .Error}}
+<p class="notice">{{.Error}}</p>
+{{else}}
+<form hx-post="/cases/{{.CaseID}}/apply" hx-target="#case-body" hx-swap="outerHTML">
+  <textarea name="reply" hidden>{{.RawReply}}</textarea>
+  <p class="muted">Оценка нейросети сохранится рядом с твоей. В расчёт она не попадёт, пока ты не нажмёшь «Принять как мою» у действия.</p>
+  <table>
+    <tr><th></th><th>Действие</th><th>Моя прикидка</th><th>Нейросеть</th><th>Обоснование</th></tr>
+    {{range .Rows}}
+    <tr>
+      <td>{{if .Applicable}}<input type="checkbox" name="apply" value="{{.ActionID}}" checked>{{end}}</td>
+      <td>{{.Title}}</td>
+      <td>{{pctLabel .MyPercent}}</td>
+      <td>{{pctLabel .Estimate.EffectPercent}}<div class="muted">{{.Estimate.Confidence}}</div></td>
+      <td class="muted">{{.Estimate.Reasoning}}{{range .Estimate.Sources}}<div>· {{.}}</div>{{end}}</td>
+    </tr>
+    {{end}}
+  </table>
+
+  {{if .Suggested}}
+  <h2 style="margin-top:16px">Предложенные действия</h2>
+  <table>
+    {{range .Suggested}}
+    <tr>
+      <td><input type="checkbox" name="add" value="{{.Index}}"></td>
+      <td>{{.Title}}<div class="muted">{{.Reasoning}}</div></td>
+      <td>{{pctLabel .EffectPercent}}<div class="muted">{{.Confidence}}</div></td>
+    </tr>
+    {{end}}
+  </table>
+  {{end}}
+
+  {{if .Comment}}<p class="muted">Про базовую вероятность: {{.Comment}}</p>{{end}}
+  <p><button class="primary">Применить выбранное</button></p>
+</form>
+{{end}}
+{{end}}

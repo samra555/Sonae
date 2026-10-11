@@ -1,0 +1,77 @@
+{
+  "profile": {
+    "age": 30,
+    "country": "RU"
+  },
+  "cases": [
+    {
+      "id": "risk-job",
+      "kind": "risk",
+      "category": "карьера",
+      "title": "Остаться без работы дольше 3 месяцев",
+      "horizon": "2 года",
+      "base_probability": 0.1,
+      "base_source": "ПРИМЕР: замени своими данными",
+      "actions": [
+        {
+          "id": "a-cv",
+          "title": "Держать резюме и портфолио актуальными",
+          "done": false,
+          "my_multiplier": 0.9
+        },
+        {
+          "id": "a-network",
+          "title": "Раз в месяц общаться с профессиональными контактами",
+          "done": false,
+          "my_multiplier": 0.85
+        },
+        {
+          "id": "a-stack",
+          "title": "Освоить второй стек",
+          "done": false
+        }
+      ]
+    },
+    {
+      "id": "asp-kitchen",
+      "kind": "aspiration",
+      "category": "дом",
+      "title": "Сделать ремонт на кухне",
+      "horizon": "до конца 2027",
+      "base_probability": 0.5,
+      "base_source": "ПРИМЕР: замени своими данными",
+      "actions": [
+        {
+          "id": "a-budget",
+          "title": "Составить смету",
+          "done": false,
+          "my_multiplier": 1.3
+        },
+        {
+          "id": "a-contractor",
+          "title": "Нанять подрядчика",
+          "done": false,
+          "requires": [
+            "a-budget"
+          ],
+          "excludes": [
+            "a-diy"
+          ],
+          "my_multiplier": 1.4
+        },
+        {
+          "id": "a-diy",
+          "title": "Делать ремонт самостоятельно",
+          "done": false,
+          "requires": [
+            "a-budget"
+          ],
+          "excludes": [
+            "a-contractor"
+          ],
+          "my_multiplier": 1.2
+        }
+      ]
+    }
+  ]
+}
