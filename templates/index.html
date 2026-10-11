@@ -39,8 +39,28 @@
     <label>Период <input name="horizon" placeholder="5 лет" required></label>
     <label>Базовая вероятность, % <input name="base_probability" placeholder="8" required></label>
     <label>Откуда цифра <input name="base_source"></label>
+    <label style="grid-column:1/-1">Описание для нейросети
+      <textarea name="description" rows="3" placeholder="Подробности: обстоятельства, что уже пробовал, ограничения. Можно оставить пустым."></textarea>
+    </label>
     <div><button class="primary">Создать</button></div>
   </form>
+</details>
+
+<details class="panel">
+  <summary>Сформировать риски нейросетью</summary>
+  <ol class="steps">
+    <li>Заполни профиль слева: по нему нейросеть подберёт главные риски.</li>
+    <li>Нажми «Сформировать промпт», скопируй и вставь в нейросеть.</li>
+    <li>Вставь JSON-ответ ниже и отметь, какие риски добавить. Существующие кейсы не меняются.</li>
+  </ol>
+  <button class="primary" hx-get="/risks/prompt" hx-target="#risks-prompt-box">Сформировать промпт</button>
+  <div id="risks-prompt-box"></div>
+
+  <form hx-post="/risks/import" hx-target="#risks-result" style="margin-top:14px">
+    <textarea name="reply" rows="8" placeholder="Вставь сюда JSON-ответ"></textarea>
+    <p><button>Проверить ответ</button></p>
+  </form>
+  <div id="risks-result"></div>
 </details>
 
 <div class="columns">
@@ -55,4 +75,37 @@
     {{else}}<div class="empty">Стремлений пока нет.<br>Добавь первое через «Новый кейс».</div>{{end}}
   </section>
 </div>
+{{end}}
+
+{{define "risks-preview"}}
+{{if .Error}}
+<p class="notice">{{.Error}}</p>
+{{else}}
+<form hx-post="/risks/apply" hx-target="#risks-apply-status">
+  <textarea name="reply" hidden>{{.RawReply}}</textarea>
+  <p class="muted">Отмеченные риски добавятся как новые кейсы. Оценки действий сохранятся как оценки нейросети:
+    в расчёт они попадут после «Принять как мою».</p>
+  <table>
+    <tr><th></th><th>Риск</th><th>База</th><th>Действия</th></tr>
+    {{range .Rows}}
+    <tr>
+      <td><input type="checkbox" name="add" value="{{.Index}}" {{if not .Duplicate}}checked{{end}}></td>
+      <td>
+        <strong>{{.Title}}</strong>
+        <div class="chips">{{if .Category}}<span>{{.Category}}</span>{{end}}<span>период: {{.Horizon}}</span></div>
+        {{if .Duplicate}}<div class="hint warn">⚠ кейс с таким названием уже есть</div>{{end}}
+        <div class="muted">{{.Description}}</div>
+      </td>
+      <td>{{optNum .BaseProbabilityPercent}}%<div class="muted">{{.BaseSource}}</div></td>
+      <td>
+        <ul class="sublist">
+          {{range .Actions}}<li>{{.Title}} · {{pctLabel .EffectPercent}} · {{.Confidence}}</li>{{end}}
+        </ul>
+      </td>
+    </tr>
+    {{end}}
+  </table>
+  <p><button class="primary">Добавить выбранные</button> <span id="risks-apply-status"></span></p>
+</form>
+{{end}}
 {{end}}

@@ -21,8 +21,28 @@ const (
 )
 
 type Profile struct {
-	Age     int    `json:"age"`
-	Country string `json:"country"`
+	Age           int    `json:"age"`
+	Sex           string `json:"sex,omitempty"`
+	Country       string `json:"country"`
+	City          string `json:"city,omitempty"`
+	Profession    string `json:"profession,omitempty"`
+	MaritalStatus string `json:"marital_status,omitempty"`
+	Children      string `json:"children,omitempty"`
+}
+
+// Allowed values of the profile dropdowns; "" means "not specified".
+var (
+	sexOptions           = []string{"", "male", "female"}
+	maritalStatusOptions = []string{"", "single", "in_relationship", "married", "divorced", "widowed"}
+	childrenOptions      = []string{"", "no", "yes"}
+)
+
+// Step is one item of an action's checklist. Steps do not affect the probability:
+// only the action does, and it is marked done automatically once every step is done.
+type Step struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Done  bool   `json:"done"`
 }
 
 type Action struct {
@@ -31,6 +51,7 @@ type Action struct {
 	Done     bool     `json:"done"`
 	Requires []string `json:"requires,omitempty"`
 	Excludes []string `json:"excludes,omitempty"`
+	Steps    []Step   `json:"steps,omitempty"`
 
 	// MyMultiplier is the only number used in the probability calculation.
 	MyMultiplier *float64 `json:"my_multiplier,omitempty"`
@@ -49,6 +70,7 @@ type Case struct {
 	Kind            Kind     `json:"kind"`
 	Category        string   `json:"category"`
 	Title           string   `json:"title"`
+	Description     string   `json:"description,omitempty"`
 	Horizon         string   `json:"horizon"`
 	BaseProbability float64  `json:"base_probability"`
 	BaseSource      string   `json:"base_source"`
@@ -63,6 +85,7 @@ type Data struct {
 var (
 	errCaseNotFound   = errors.New("кейс не найден")
 	errActionNotFound = errors.New("действие не найдено")
+	errStepNotFound   = errors.New("шаг не найден")
 )
 
 // CurrentProbability multiplies the base probability by the multipliers of done actions.
@@ -168,6 +191,41 @@ func (d *Data) ToggleAction(action *Action) error {
 	return nil
 }
 
+func (a *Action) findStep(stepID string) *Step {
+	for stepIndex := range a.Steps {
+		if a.Steps[stepIndex].ID == stepID {
+			return &a.Steps[stepIndex]
+		}
+	}
+	return nil
+}
+
+func (a Action) DoneStepCount() int {
+	doneCount := 0
+	for _, step := range a.Steps {
+		if step.Done {
+			doneCount++
+		}
+	}
+	return doneCount
+}
+
+// ToggleStep flips a step and keeps the action in sync: the last step done marks the action done,
+// and undoing a step of a done action un-marks it. If the action cannot follow, the step is refused too.
+// An action marked done by hand while some steps are open stays done when other steps are checked.
+func (d *Data) ToggleStep(action *Action, step *Step) error {
+	step.Done = !step.Done
+	completesAction := step.Done && !action.Done && action.DoneStepCount() == len(action.Steps)
+	reopensAction := !step.Done && action.Done
+	if !completesAction && !reopensAction {
+		return nil
+	}
+	if err := d.ToggleAction(action); err != nil {
+		return fmt.Errorf("шаг не отмечен: %w", err)
+	}
+	return nil
+}
+
 func validMultiplier(multiplier *float64) bool {
 	if multiplier == nil {
 		return true
@@ -183,6 +241,11 @@ func validConfidence(confidence string) bool {
 func (d *Data) Validate() error {
 	if d.Profile.Age < 0 || d.Profile.Age > 120 {
 		return fmt.Errorf("возраст должен быть от 0 до 120")
+	}
+	if !slices.Contains(sexOptions, d.Profile.Sex) ||
+		!slices.Contains(maritalStatusOptions, d.Profile.MaritalStatus) ||
+		!slices.Contains(childrenOptions, d.Profile.Children) {
+		return fmt.Errorf("профиль: недопустимое значение в списке")
 	}
 
 	caseIDs := map[string]bool{}
@@ -215,6 +278,16 @@ func (d *Data) Validate() error {
 			}
 			if !validMultiplier(action.LLMMultiplier) || !validMultiplier(action.MyMultiplier) {
 				return fmt.Errorf("действие %q: множитель вне диапазона %.2f–%.0f", action.ID, minMultiplier, maxMultiplier)
+			}
+			stepIDs := map[string]bool{}
+			for _, step := range action.Steps {
+				if step.ID == "" || stepIDs[step.ID] {
+					return fmt.Errorf("действие %q: пустой или повторяющийся id шага %q", action.ID, step.ID)
+				}
+				stepIDs[step.ID] = true
+				if strings.TrimSpace(step.Title) == "" {
+					return fmt.Errorf("действие %q: пустое название шага", action.ID)
+				}
 			}
 			actionsByID[action.ID] = action
 		}

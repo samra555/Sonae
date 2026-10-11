@@ -17,9 +17,11 @@ h2{font-size:18px;margin:0 0 12px}
 code{color:var(--muted);font-size:12px;margin-left:6px}
 
 .app{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
-.sidebar{background:var(--panel);border-right:1px solid var(--line);padding:22px 20px;position:sticky;top:0;height:100vh;align-self:start}
-.brand a{font-size:20px;font-weight:700;color:var(--text)}
+.sidebar{background:var(--panel);border-right:1px solid var(--line);padding:22px 20px;position:sticky;top:0;height:100vh;align-self:start;overflow-y:auto}
+.brand a{display:inline-block;background:#f4f6fa;border-radius:10px;padding:4px 10px}
 .brand a:hover{text-decoration:none}
+/* The logo file has wide empty margins: at this size cover crops exactly them, leaving the lettering. */
+.brand img{display:block;width:180px;max-width:100%;height:50px;object-fit:cover}
 .side-card{margin-top:28px}
 .side-card h3{margin:0 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 .side-card form{display:grid;gap:10px;margin-top:10px}
@@ -98,6 +100,17 @@ button.danger:hover{background:rgba(191,97,106,.15)}
 .inline-details{margin-top:8px}
 .inline-details>summary{cursor:pointer;color:var(--accent);font-size:12px}
 .steps{display:grid;gap:6px;margin:0 0 14px;padding-left:20px;color:var(--muted);font-size:13px}
+.description{white-space:pre-wrap;margin:4px 0 8px;color:var(--text);font-size:14px}
+.checklist{display:grid;gap:4px;margin:8px 0 2px}
+.checklist-item{display:flex;align-items:center;gap:8px;font-size:13px}
+.checklist-item input[type=checkbox]{width:16px;height:16px}
+.checklist-item.done>span{color:var(--muted);text-decoration:line-through}
+.checklist-item form{display:inline;margin:0}
+.checklist-item .remove{border:0;background:transparent;padding:0 6px;color:var(--muted);font-size:12px}
+.checklist-item .remove:hover{color:var(--bad)}
+.step-add{display:flex;gap:6px;align-items:end;margin:6px 0 0}
+.step-add textarea{padding:4px 8px;max-width:420px}
+.sublist{margin:6px 0 0;padding-left:18px;font-size:13px;color:var(--muted)}
 
 .links{margin-top:10px;display:grid;gap:8px}
 .link-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
@@ -140,14 +153,42 @@ function previewEffect(input){
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand"><a href="/">🎯 Готовность</a></div>
+    <div class="brand"><a href="/"><img src="/static/Sonae-Logo.png" alt="Sonae"></a></div>
 
     <section class="side-card">
       <h3>Профиль</h3>
       <div class="muted">Уходит в каждый промпт нейросети</div>
       <form hx-post="/profile" hx-target="#profile-status" hx-swap="innerHTML">
-        <label>Возраст <input name="age" value="{{.Profile.Age}}" inputmode="numeric" required></label>
-        <label>Страна <input name="country" value="{{.Profile.Country}}"></label>
+        {{with .Profile}}
+        <label>Возраст <input name="age" value="{{.Age}}" inputmode="numeric" required></label>
+        <label>Пол
+          <select name="sex">
+            <option value="">не указан</option>
+            <option value="male" {{if eq .Sex "male"}}selected{{end}}>мужской</option>
+            <option value="female" {{if eq .Sex "female"}}selected{{end}}>женский</option>
+          </select>
+        </label>
+        <label>Страна <input name="country" value="{{.Country}}"></label>
+        <label>Город <input name="city" value="{{.City}}"></label>
+        <label>Профессия <input name="profession" value="{{.Profession}}"></label>
+        <label>Семейное положение
+          <select name="marital_status">
+            <option value="">не указано</option>
+            <option value="single" {{if eq .MaritalStatus "single"}}selected{{end}}>не в браке</option>
+            <option value="in_relationship" {{if eq .MaritalStatus "in_relationship"}}selected{{end}}>в отношениях</option>
+            <option value="married" {{if eq .MaritalStatus "married"}}selected{{end}}>в браке</option>
+            <option value="divorced" {{if eq .MaritalStatus "divorced"}}selected{{end}}>в разводе</option>
+            <option value="widowed" {{if eq .MaritalStatus "widowed"}}selected{{end}}>вдовец / вдова</option>
+          </select>
+        </label>
+        <label>Дети
+          <select name="children">
+            <option value="">не указано</option>
+            <option value="no" {{if eq .Children "no"}}selected{{end}}>нет</option>
+            <option value="yes" {{if eq .Children "yes"}}selected{{end}}>есть</option>
+          </select>
+        </label>
+        {{end}}
         <div><button class="primary">Сохранить</button> <span id="profile-status"></span></div>
       </form>
     </section>
@@ -156,3 +197,9 @@ function previewEffect(input){
 </div>
 </body>
 </html>{{end}}
+
+{{define "prompt-box"}}
+<p class="muted">Промпт готов: скопируй и вставь в нейросеть.</p>
+<textarea id="prompt-text" rows="12" readonly>{{.Prompt}}</textarea>
+<p><button class="primary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('prompt-text').value);this.textContent='Скопировано ✓'">Копировать</button></p>
+{{end}}

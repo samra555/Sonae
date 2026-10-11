@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-//go:embed templates/*.html prompt.tmpl
+//go:embed templates/*.html prompt.tmpl risks.tmpl static
 var embeddedFiles embed.FS
 
 func main() {

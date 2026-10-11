@@ -98,6 +98,7 @@ func (s *Server) handleUpdateCase(w http.ResponseWriter, r *http.Request) {
 		targetCase.Kind = Kind(r.FormValue("kind"))
 		targetCase.Category = strings.TrimSpace(r.FormValue("category"))
 		targetCase.Title = strings.TrimSpace(r.FormValue("title"))
+		targetCase.Description = strings.TrimSpace(r.FormValue("description"))
 		targetCase.Horizon = strings.TrimSpace(r.FormValue("horizon"))
 		targetCase.BaseProbability = baseProbabilityPercent / 100
 		targetCase.BaseSource = strings.TrimSpace(r.FormValue("base_source"))
@@ -242,7 +243,69 @@ func (s *Server) handleAcceptEstimate(w http.ResponseWriter, r *http.Request) {
 	s.renderCaseBody(w, caseID, noticeOf(err))
 }
 
-func writeProfileStatus(w http.ResponseWriter, message string, isError bool) {
+func (s *Server) handleCreateStep(w http.ResponseWriter, r *http.Request) {
+	caseID := r.PathValue("id")
+	actionID := r.PathValue("actionID")
+
+	err := s.store.Update(func(data *Data) error {
+		action := data.findAction(actionID)
+		if action == nil {
+			return errActionNotFound
+		}
+		var stepTitles []string
+		for _, line := range strings.Split(r.FormValue("titles"), "\n") {
+			if title := strings.TrimSpace(line); title != "" {
+				stepTitles = append(stepTitles, title)
+			}
+		}
+		if len(stepTitles) == 0 {
+			return errors.New("у шага должно быть название")
+		}
+		addSteps(action, stepTitles)
+		return nil
+	})
+	s.renderCaseBody(w, caseID, noticeOf(err))
+}
+
+func (s *Server) handleToggleStep(w http.ResponseWriter, r *http.Request) {
+	caseID := r.PathValue("id")
+	actionID := r.PathValue("actionID")
+
+	err := s.store.Update(func(data *Data) error {
+		action := data.findAction(actionID)
+		if action == nil {
+			return errActionNotFound
+		}
+		step := action.findStep(r.PathValue("stepID"))
+		if step == nil {
+			return errStepNotFound
+		}
+		return data.ToggleStep(action, step)
+	})
+	s.renderCaseBody(w, caseID, noticeOf(err))
+}
+
+func (s *Server) handleDeleteStep(w http.ResponseWriter, r *http.Request) {
+	caseID := r.PathValue("id")
+	actionID := r.PathValue("actionID")
+	stepID := r.PathValue("stepID")
+
+	err := s.store.Update(func(data *Data) error {
+		action := data.findAction(actionID)
+		if action == nil {
+			return errActionNotFound
+		}
+		if action.findStep(stepID) == nil {
+			return errStepNotFound
+		}
+		action.Steps = slices.DeleteFunc(action.Steps, func(step Step) bool { return step.ID == stepID })
+		return nil
+	})
+	s.renderCaseBody(w, caseID, noticeOf(err))
+}
+
+// writeStatus answers an htmx form with a short coloured message.
+func writeStatus(w http.ResponseWriter, message string, isError bool) {
 	cssClass := "ok"
 	if isError {
 		cssClass = "err"
@@ -254,17 +317,25 @@ func writeProfileStatus(w http.ResponseWriter, message string, isError bool) {
 func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	age, err := strconv.Atoi(strings.TrimSpace(r.FormValue("age")))
 	if err != nil {
-		writeProfileStatus(w, "возраст: целое число", true)
+		writeStatus(w, "возраст: целое число", true)
 		return
 	}
 
 	err = s.store.Update(func(data *Data) error {
-		data.Profile = Profile{Age: age, Country: strings.TrimSpace(r.FormValue("country"))}
+		data.Profile = Profile{
+			Age:           age,
+			Sex:           r.FormValue("sex"),
+			Country:       strings.TrimSpace(r.FormValue("country")),
+			City:          strings.TrimSpace(r.FormValue("city")),
+			Profession:    strings.TrimSpace(r.FormValue("profession")),
+			MaritalStatus: r.FormValue("marital_status"),
+			Children:      r.FormValue("children"),
+		}
 		return nil
 	})
 	if err != nil {
-		writeProfileStatus(w, err.Error(), true)
+		writeStatus(w, err.Error(), true)
 		return
 	}
-	writeProfileStatus(w, "Сохранено ✓", false)
+	writeStatus(w, "Сохранено ✓", false)
 }

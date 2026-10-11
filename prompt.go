@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	texttemplate "text/template"
 )
@@ -16,18 +17,25 @@ type exportCase struct {
 	Kind            Kind    `json:"kind"`
 	Category        string  `json:"category"`
 	Title           string  `json:"title"`
+	Description     string  `json:"description"`
 	Horizon         string  `json:"horizon"`
 	BaseProbability float64 `json:"base_probability"`
 	BaseSource      string  `json:"base_source"`
 }
 
+type exportStep struct {
+	Title string `json:"title"`
+	Done  bool   `json:"done"`
+}
+
 type exportAction struct {
-	ID              string   `json:"id"`
-	Title           string   `json:"title"`
-	Done            bool     `json:"done"`
-	Requires        []string `json:"requires"`
-	Excludes        []string `json:"excludes"`
-	MyEffectPercent *float64 `json:"my_effect_percent"`
+	ID              string       `json:"id"`
+	Title           string       `json:"title"`
+	Done            bool         `json:"done"`
+	Steps           []exportStep `json:"steps"`
+	Requires        []string     `json:"requires"`
+	Excludes        []string     `json:"excludes"`
+	MyEffectPercent *float64     `json:"my_effect_percent"`
 }
 
 type estimateRequest struct {
@@ -53,6 +61,7 @@ func buildPrompt(promptTemplate *texttemplate.Template, profile Profile, targetC
 			Kind:            targetCase.Kind,
 			Category:        targetCase.Category,
 			Title:           targetCase.Title,
+			Description:     targetCase.Description,
 			Horizon:         targetCase.Horizon,
 			BaseProbability: targetCase.BaseProbability,
 			BaseSource:      targetCase.BaseSource,
@@ -60,23 +69,37 @@ func buildPrompt(promptTemplate *texttemplate.Template, profile Profile, targetC
 		Actions: []exportAction{},
 	}
 	for _, action := range targetCase.Actions {
+		steps := []exportStep{}
+		for _, step := range action.Steps {
+			steps = append(steps, exportStep{Title: step.Title, Done: step.Done})
+		}
 		request.Actions = append(request.Actions, exportAction{
 			ID:              action.ID,
 			Title:           action.Title,
 			Done:            action.Done,
+			Steps:           steps,
 			Requires:        orEmpty(action.Requires),
 			Excludes:        orEmpty(action.Excludes),
 			MyEffectPercent: optionalPercent(action.MyMultiplier),
 		})
 	}
 
+	// Only aspirations ask for a breakdown into steps: there the user works through a plan.
+	return renderPrompt(promptTemplate, request, targetCase.Kind == KindAspiration)
+}
+
+// renderPrompt puts the request JSON into the template; the template sees .JSON and .Aspiration.
+func renderPrompt(promptTemplate *texttemplate.Template, request any, aspiration bool) (string, error) {
 	requestJSON, err := json.MarshalIndent(request, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("не удалось собрать JSON: %w", err)
 	}
 
 	var promptBuffer bytes.Buffer
-	templateData := struct{ JSON string }{JSON: string(requestJSON)}
+	templateData := struct {
+		JSON       string
+		Aspiration bool
+	}{JSON: string(requestJSON), Aspiration: aspiration}
 	if err := promptTemplate.Execute(&promptBuffer, templateData); err != nil {
 		return "", fmt.Errorf("не удалось собрать промпт: %w", err)
 	}
@@ -86,19 +109,21 @@ func buildPrompt(promptTemplate *texttemplate.Template, profile Profile, targetC
 // ---- reply (what the neural net sends back) ----
 
 type ActionEstimate struct {
-	ID            string   `json:"id"`
-	EffectPercent *float64 `json:"effect_percent"`
-	Confidence    string   `json:"confidence"`
-	Reasoning     string   `json:"reasoning"`
-	Sources       []string `json:"sources"`
-	OverlapsWith  []string `json:"overlaps_with"`
+	ID             string   `json:"id"`
+	EffectPercent  *float64 `json:"effect_percent"`
+	Confidence     string   `json:"confidence"`
+	Reasoning      string   `json:"reasoning"`
+	Sources        []string `json:"sources"`
+	OverlapsWith   []string `json:"overlaps_with"`
+	SuggestedSteps []string `json:"suggested_steps"`
 }
 
 type SuggestedAction struct {
-	Title         string   `json:"title"`
-	EffectPercent *float64 `json:"effect_percent"`
-	Confidence    string   `json:"confidence"`
-	Reasoning     string   `json:"reasoning"`
+	Title          string   `json:"title"`
+	EffectPercent  *float64 `json:"effect_percent"`
+	Confidence     string   `json:"confidence"`
+	Reasoning      string   `json:"reasoning"`
+	SuggestedSteps []string `json:"suggested_steps"`
 }
 
 type AssistantReply struct {
@@ -108,23 +133,27 @@ type AssistantReply struct {
 	BaseProbabilityComment string            `json:"base_probability_comment"`
 }
 
-// parseAssistantReply takes everything between the first "{" and the last "}", so it
+// decodeReply takes everything between the first "{" and the last "}", so it
 // survives ```json fences and chatter around the JSON, then decodes it strictly.
-func parseAssistantReply(rawReply string) (AssistantReply, error) {
+func decodeReply(rawReply string, target any) error {
 	jsonStart := strings.Index(rawReply, "{")
 	jsonEnd := strings.LastIndex(rawReply, "}")
 	if jsonStart < 0 || jsonEnd < jsonStart {
-		return AssistantReply{}, errors.New("в ответе не найден JSON")
+		return errors.New("в ответе не найден JSON")
 	}
 
 	decoder := json.NewDecoder(strings.NewReader(rawReply[jsonStart : jsonEnd+1]))
 	decoder.DisallowUnknownFields()
-
-	var reply AssistantReply
-	if err := decoder.Decode(&reply); err != nil {
-		return AssistantReply{}, fmt.Errorf("ответ не соответствует схеме: %w", err)
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("ответ не соответствует схеме: %w", err)
 	}
-	return reply, nil
+	return nil
+}
+
+func parseAssistantReply(rawReply string) (AssistantReply, error) {
+	var reply AssistantReply
+	err := decodeReply(rawReply, &reply)
+	return reply, err
 }
 
 func (reply AssistantReply) Validate(targetCase Case) error {
@@ -153,6 +182,11 @@ func (reply AssistantReply) Validate(targetCase Case) error {
 		if !validConfidence(estimate.Confidence) {
 			return fmt.Errorf("действие %q: confidence должен быть low, medium или high", estimate.ID)
 		}
+		for _, stepTitle := range estimate.SuggestedSteps {
+			if strings.TrimSpace(stepTitle) == "" {
+				return fmt.Errorf("действие %q: пустой шаг в suggested_steps", estimate.ID)
+			}
+		}
 	}
 
 	for suggestedIndex, suggested := range reply.SuggestedActions {
@@ -166,6 +200,11 @@ func (reply AssistantReply) Validate(targetCase Case) error {
 		if !validConfidence(suggested.Confidence) {
 			return fmt.Errorf("предложенное действие №%d: неверный confidence", position)
 		}
+		for _, stepTitle := range suggested.SuggestedSteps {
+			if strings.TrimSpace(stepTitle) == "" {
+				return fmt.Errorf("предложенное действие №%d: пустой шаг в suggested_steps", position)
+			}
+		}
 	}
 	return nil
 }
@@ -173,6 +212,25 @@ func (reply AssistantReply) Validate(targetCase Case) error {
 type ApplySelection struct {
 	ActionIDs        map[string]bool
 	SuggestedIndexes map[int]bool
+	// StepKeys holds stepKey(actionID, index) of the suggested steps to add.
+	StepKeys map[string]bool
+}
+
+func stepKey(actionID string, stepIndex int) string {
+	return fmt.Sprintf("%s/%d", actionID, stepIndex)
+}
+
+// addSteps appends steps to the action's checklist, skipping titles it already has.
+func addSteps(action *Action, stepTitles []string) {
+	for _, stepTitle := range stepTitles {
+		stepTitle = strings.TrimSpace(stepTitle)
+		alreadyThere := slices.ContainsFunc(action.Steps, func(step Step) bool {
+			return strings.EqualFold(step.Title, stepTitle)
+		})
+		if !alreadyThere {
+			action.Steps = append(action.Steps, Step{ID: newID("s"), Title: stepTitle})
+		}
+	}
 }
 
 func applyReply(targetCase *Case, reply AssistantReply, selection ApplySelection, estimatedAt string) {
@@ -182,10 +240,19 @@ func applyReply(targetCase *Case, reply AssistantReply, selection ApplySelection
 	}
 
 	for _, estimate := range reply.Actions {
+		action := actionsByID[estimate.ID]
+
+		var chosenSteps []string
+		for stepIndex, stepTitle := range estimate.SuggestedSteps {
+			if selection.StepKeys[stepKey(estimate.ID, stepIndex)] {
+				chosenSteps = append(chosenSteps, stepTitle)
+			}
+		}
+		addSteps(action, chosenSteps)
+
 		if !selection.ActionIDs[estimate.ID] || estimate.EffectPercent == nil {
 			continue
 		}
-		action := actionsByID[estimate.ID]
 		action.LLMMultiplier = multiplierFromPercent(estimate.EffectPercent)
 		action.Confidence = estimate.Confidence
 		action.Reasoning = estimate.Reasoning
@@ -198,13 +265,15 @@ func applyReply(targetCase *Case, reply AssistantReply, selection ApplySelection
 		if !selection.SuggestedIndexes[suggestedIndex] {
 			continue
 		}
-		targetCase.Actions = append(targetCase.Actions, Action{
+		newAction := Action{
 			ID:            newID("a"),
 			Title:         suggested.Title,
 			LLMMultiplier: multiplierFromPercent(suggested.EffectPercent),
 			Confidence:    suggested.Confidence,
 			Reasoning:     suggested.Reasoning,
 			EstimatedAt:   estimatedAt,
-		})
+		}
+		addSteps(&newAction, suggested.SuggestedSteps)
+		targetCase.Actions = append(targetCase.Actions, newAction)
 	}
 }

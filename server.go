@@ -19,9 +19,11 @@ import (
 )
 
 type Server struct {
+	files          fs.FS
 	store          *Store
 	pageTemplates  map[string]*template.Template
 	promptTemplate *texttemplate.Template
+	risksTemplate  *texttemplate.Template
 }
 
 func NewServer(store *Store, files fs.FS) (*Server, error) {
@@ -38,6 +40,7 @@ func NewServer(store *Store, files fs.FS) (*Server, error) {
 		"numStr":       numStr,
 		"optNum":       optNum,
 		"percentValue": percentValue,
+		"stepKey":      stepKey,
 	}
 
 	pageTemplates := map[string]*template.Template{}
@@ -54,12 +57,17 @@ func NewServer(store *Store, files fs.FS) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{store: store, pageTemplates: pageTemplates, promptTemplate: promptTemplate}, nil
+	risksTemplate, err := texttemplate.ParseFS(files, "risks.tmpl")
+	if err != nil {
+		return nil, err
+	}
+	return &Server{files: files, store: store, pageTemplates: pageTemplates, promptTemplate: promptTemplate, risksTemplate: risksTemplate}, nil
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
+	mux.Handle("GET /static/", http.FileServerFS(s.files))
 	mux.HandleFunc("POST /cases", s.handleCreateCase)
 	mux.HandleFunc("GET /cases/{id}", s.handleCase)
 	mux.HandleFunc("POST /cases/{id}/actions", s.handleCreateAction)
@@ -73,7 +81,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/delete", s.handleDeleteAction)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/links", s.handleLinks)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/accept", s.handleAcceptEstimate)
+	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/steps", s.handleCreateStep)
+	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/steps/{stepID}/toggle", s.handleToggleStep)
+	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/steps/{stepID}/delete", s.handleDeleteStep)
 	mux.HandleFunc("POST /profile", s.handleUpdateProfile)
+	mux.HandleFunc("GET /risks/prompt", s.handleRisksPrompt)
+	mux.HandleFunc("POST /risks/import", s.handleRisksImport)
+	mux.HandleFunc("POST /risks/apply", s.handleRisksApply)
 	return mux
 }
 
@@ -385,6 +399,7 @@ func (s *Server) handleCreateCase(w http.ResponseWriter, r *http.Request) {
 		Kind:            Kind(r.FormValue("kind")),
 		Category:        strings.TrimSpace(r.FormValue("category")),
 		Title:           strings.TrimSpace(r.FormValue("title")),
+		Description:     strings.TrimSpace(r.FormValue("description")),
 		Horizon:         strings.TrimSpace(r.FormValue("horizon")),
 		BaseProbability: baseProbabilityPercent / 100,
 		BaseSource:      strings.TrimSpace(r.FormValue("base_source")),
@@ -508,9 +523,12 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	selection := ApplySelection{ActionIDs: map[string]bool{}, SuggestedIndexes: map[int]bool{}}
+	selection := ApplySelection{ActionIDs: map[string]bool{}, SuggestedIndexes: map[int]bool{}, StepKeys: map[string]bool{}}
 	for _, actionID := range r.Form["apply"] {
 		selection.ActionIDs[actionID] = true
+	}
+	for _, chosenStepKey := range r.Form["step"] {
+		selection.StepKeys[chosenStepKey] = true
 	}
 	for _, rawIndex := range r.Form["add"] {
 		if suggestedIndex, err := strconv.Atoi(rawIndex); err == nil {

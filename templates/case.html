@@ -32,6 +32,7 @@
       <span>период: {{.Case.Horizon}}</span>
     </div>
     <h1>{{.Case.Title}}</h1>
+    {{if .Case.Description}}<div class="description">{{.Case.Description}}</div>{{end}}
     <div class="prob-row">
       <span class="prob-base">{{percent .Case.BaseProbability}}</span> →
       <span class="prob-now">{{percent .Current}}</span>
@@ -72,6 +73,31 @@
         {{end}}
       </div>
       {{end}}
+
+      {{if .Steps}}
+      <div class="checklist">
+        <div class="hint">Шаги: {{.DoneStepCount}} из {{len .Steps}}</div>
+        {{range .Steps}}
+        <div class="checklist-item {{if .Done}}done{{end}}">
+          <input type="checkbox"
+                 hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/steps/{{.ID}}/toggle"
+                 hx-target="#case-body" hx-swap="outerHTML"
+                 {{if .Done}}checked{{end}}>
+          <span>{{.Title}}</span>
+          <form hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/steps/{{.ID}}/delete" hx-target="#case-body" hx-swap="outerHTML">
+            <button class="remove" title="удалить шаг">✕</button>
+          </form>
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+      <details class="inline-details"><summary>{{if .Steps}}добавить шаг{{else}}разбить на шаги{{end}}</summary>
+        <form class="step-add" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/steps" hx-target="#case-body" hx-swap="outerHTML">
+          <textarea name="titles" rows="3" placeholder="По одному шагу на строку" required></textarea>
+          <div><button class="mini">Добавить</button></div>
+        </form>
+        <div class="hint">Когда все шаги отмечены, действие отмечается выполненным само.</div>
+      </details>
 
       <details class="inline-details"><summary>изменить</summary>
         <form class="grid edit-form" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/update" hx-target="#case-body" hx-swap="outerHTML">
@@ -175,18 +201,15 @@
       <label>Период <input name="horizon" value="{{.Case.Horizon}}" required></label>
       <label>База, % <input name="base_probability" value="{{percentValue .Case.BaseProbability}}" required></label>
       <label>Откуда цифра <input name="base_source" value="{{.Case.BaseSource}}"></label>
+      <label style="grid-column:1/-1">Описание для нейросети
+        <textarea name="description" rows="4" placeholder="Подробности: обстоятельства, что уже пробовал, ограничения. Можно оставить пустым.">{{.Case.Description}}</textarea>
+      </label>
       <div><button class="primary">Сохранить</button></div>
     </form>
     <button class="danger" hx-post="/cases/{{.Case.ID}}/delete" hx-confirm="Удалить кейс вместе со всеми действиями?"
             hx-target="#case-body" hx-swap="outerHTML">Удалить кейс</button>
   </details>
 </div>
-{{end}}
-
-{{define "prompt-box"}}
-<p class="muted">Промпт готов: скопируй и вставь в нейросеть.</p>
-<textarea id="prompt-text" rows="12" readonly>{{.Prompt}}</textarea>
-<p><button class="primary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('prompt-text').value);this.textContent='Скопировано ✓'">Копировать</button></p>
 {{end}}
 
 {{define "import-preview"}}
@@ -206,6 +229,18 @@
       <td>{{pctLabel .Estimate.EffectPercent}}<div class="muted">{{.Estimate.Confidence}}</div></td>
       <td class="muted">{{.Estimate.Reasoning}}{{range .Estimate.Sources}}<div>· {{.}}</div>{{end}}</td>
     </tr>
+    {{if .Estimate.SuggestedSteps}}
+    {{$rowActionID := .ActionID}}
+    <tr>
+      <td></td>
+      <td colspan="4">
+        <div class="muted">Предложенные шаги (добавятся в чеклист, существующие не изменятся):</div>
+        {{range $stepIndex, $stepTitle := .Estimate.SuggestedSteps}}
+        <label class="check"><input type="checkbox" name="step" value="{{stepKey $rowActionID $stepIndex}}" checked> {{$stepTitle}}</label>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
     {{end}}
   </table>
 
@@ -215,7 +250,9 @@
     {{range .Suggested}}
     <tr>
       <td><input type="checkbox" name="add" value="{{.Index}}"></td>
-      <td>{{.Title}}<div class="muted">{{.Reasoning}}</div></td>
+      <td>{{.Title}}<div class="muted">{{.Reasoning}}</div>
+        {{if .SuggestedSteps}}<ol class="sublist">{{range .SuggestedSteps}}<li>{{.}}</li>{{end}}</ol>{{end}}
+      </td>
       <td>{{pctLabel .EffectPercent}}<div class="muted">{{.Confidence}}</div></td>
     </tr>
     {{end}}

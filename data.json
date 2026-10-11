@@ -1,7 +1,12 @@
 {
   "profile": {
     "age": 30,
-    "country": "RU"
+    "sex": "male",
+    "country": "Россия",
+    "city": "Екатеринбург",
+    "profession": "Программист",
+    "marital_status": "married",
+    "children": "no"
   },
   "cases": [
     {

@@ -1,5 +1,7 @@
 Ты помогаешь оценить, как конкретные действия меняют вероятность события.
 Ниже JSON с кейсом, моим профилем и списком действий.
+В case.description может быть подробное описание ситуации, в profile — данные обо мне: учитывай их.
+У действия может быть список steps — это мой план, из каких шагов оно состоит.
 
 ПРАВИЛА
 1. Ответь ТОЛЬКО валидным JSON по схеме ниже. Без текста до и после, без markdown-обёртки.
@@ -16,17 +18,25 @@
 8. my_effect_percent это моя собственная прикидка (null, если её нет). Если ты не согласен с ней,
    всё равно дай свою оценку и коротко объясни разницу в reasoning.
 9. В ответе должны быть ВСЕ действия из списка с теми же id.
+{{- if .Aspiration}}
+10. Это стремление, и мне нужен план. Для каждого действия (и для каждого из suggested_actions) дай в suggested_steps
+    3–7 конкретных шагов в порядке выполнения: коротко, в повелительном наклонении, каждый шаг можно сделать за раз.
+    Если у действия уже есть steps, не повторяй их, а предложи только недостающие; если всё есть, оставь [].
+    Если в моих шагах что-то лишнее или порядок неудачный, скажи об этом в reasoning.
+{{- else}}
+10. suggested_steps оставляй пустым: [].
+{{- end}}
 
 СХЕМА ОТВЕТА
 {
   "case_id": string,
   "actions": [
     { "id": string, "effect_percent": number|null, "confidence": "low"|"medium"|"high",
-      "reasoning": string, "sources": [string], "overlaps_with": [string] }
+      "reasoning": string, "sources": [string], "overlaps_with": [string], "suggested_steps": [string] }
   ],
   "suggested_actions": [
     { "title": string, "effect_percent": number|null, "confidence": "low"|"medium"|"high",
-      "reasoning": string }
+      "reasoning": string, "suggested_steps": [string] }
   ],
   "base_probability_comment": string
 }
