@@ -50,10 +50,15 @@
   <summary>Сформировать риски нейросетью</summary>
   <ol class="steps">
     <li>Заполни профиль слева: по нему нейросеть подберёт главные риски.</li>
+    <li>Если нужно, уточни, на чём сосредоточиться.</li>
     <li>Нажми «Сформировать промпт», скопируй и вставь в нейросеть.</li>
     <li>Вставь JSON-ответ ниже и отметь, какие риски добавить. Существующие кейсы не меняются.</li>
   </ol>
-  <button class="primary" hx-get="/risks/prompt" hx-target="#risks-prompt-box">Сформировать промпт</button>
+  <label>Уточнение (необязательно)
+    <textarea id="risks-focus" name="focus" rows="3"
+              placeholder="Например: переезд в другую страну через год; только риски для здоровья; работаю на удалёнке и много сижу"></textarea>
+  </label>
+  <p><button class="primary" hx-get="/risks/prompt" hx-include="#risks-focus" hx-target="#risks-prompt-box">Сформировать промпт</button></p>
   <div id="risks-prompt-box"></div>
 
   <form hx-post="/risks/import" hx-target="#risks-result" style="margin-top:14px">

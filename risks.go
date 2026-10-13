@@ -23,15 +23,18 @@ type existingCaseSummary struct {
 type risksRequest struct {
 	Task          string                `json:"task"`
 	Count         int                   `json:"count"`
+	Focus         string                `json:"focus"`
 	Profile       Profile               `json:"profile"`
 	ExistingCases []existingCaseSummary `json:"existing_cases"`
 }
 
 // buildRisksPrompt sends the profile and the existing cases, so the neural net does not repeat them.
-func (s *Server) buildRisksPrompt(data *Data) (string, error) {
+// focus is the user's optional clarification of what to concentrate on; it is not stored.
+func (s *Server) buildRisksPrompt(data *Data, focus string) (string, error) {
 	request := risksRequest{
 		Task:          "suggest_main_risks",
 		Count:         suggestedRiskCount,
+		Focus:         strings.TrimSpace(focus),
 		Profile:       data.Profile,
 		ExistingCases: []existingCaseSummary{},
 	}
@@ -164,7 +167,7 @@ func (s *Server) handleRisksPrompt(w http.ResponseWriter, r *http.Request) {
 	var promptText string
 	var promptErr error
 	s.store.Read(func(data *Data) {
-		promptText, promptErr = s.buildRisksPrompt(data)
+		promptText, promptErr = s.buildRisksPrompt(data, r.FormValue("focus"))
 	})
 	if promptErr != nil {
 		http.Error(w, promptErr.Error(), http.StatusInternalServerError)

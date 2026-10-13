@@ -1,20 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ClaudeCodeEditorTabs">
-    <option name="activeSessionId" value="4c2b213e-3643-47b6-81ff-a34376274d93" />
+    <option name="activeSessionId" value="4942f8c8-3bad-4ec8-976f-9f82d0eb9616" />
     <option name="openSessionIds">
       <list>
-        <option value="4c2b213e-3643-47b6-81ff-a34376274d93" />
+        <option value="5dfc41b0-df54-496b-9418-47056635812b" />
+        <option value="4942f8c8-3bad-4ec8-976f-9f82d0eb9616" />
       </list>
     </option>
     <option name="sessionPaths">
       <map>
-        <entry key="4c2b213e-3643-47b6-81ff-a34376274d93" value="/sessions/e0046408-915c-4add-9fe9-ecd4e6b794d5" />
+        <entry key="4942f8c8-3bad-4ec8-976f-9f82d0eb9616" value="/sessions/e0046408-915c-4add-9fe9-ecd4e6b794d5" />
+        <entry key="5dfc41b0-df54-496b-9418-47056635812b" value="/sessions/e0046408-915c-4add-9fe9-ecd4e6b794d5" />
       </map>
     </option>
     <option name="sessionTitles">
       <map>
-        <entry key="4c2b213e-3643-47b6-81ff-a34376274d93" value="тест" />
+        <entry key="4942f8c8-3bad-4ec8-976f-9f82d0eb9616" value="Первая сессия" />
+        <entry key="5dfc41b0-df54-496b-9418-47056635812b" value="Первая сессия" />
       </map>
     </option>
   </component>
