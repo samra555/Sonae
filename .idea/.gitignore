@@ -6,3 +6,5 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+# Claude Code editor tabs state
+/claudeCodeEditorTabs.xml

@@ -1,0 +1,40 @@
+{{define "login-page"}}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вход · Готовность</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="login-page">
+  <div class="brand"><a href="/login"><img src="/static/Sonae-Logo.png" alt="Sonae"></a></div>
+
+  {{if .Error}}<p class="notice">{{.Error}}</p>{{end}}
+
+  <div class="login-forms">
+    {{if .HasUsers}}
+    <form method="post" action="/login">
+      <h2>Вход</h2>
+      <label>Логин <input name="login" value="{{.Login}}" autocomplete="username" required autofocus></label>
+      <label>Пароль <input name="password" type="password" autocomplete="current-password" required></label>
+      <div><button class="primary">Войти</button></div>
+    </form>
+    {{end}}
+
+    <form method="post" action="/register">
+      <h2>Новая учётка</h2>
+      {{if not .HasUsers}}
+      <p class="muted">Учёток пока нет. Первая учётка получит данные из старого data.json, если он есть.</p>
+      {{end}}
+      <label>Логин <input name="login" {{if not .HasUsers}}value="{{.Login}}" autofocus{{end}} autocomplete="username"
+                          pattern="[a-zA-Z0-9_\-]{2,32}" title="2–32 символа: латиница, цифры, «-» и «_»" required></label>
+      <label>Пароль <input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+      <label>Пароль ещё раз <input name="password_repeat" type="password" minlength="8" autocomplete="new-password" required></label>
+      <div><button class="primary">Создать и войти</button></div>
+      <p class="muted">У каждой учётки свои кейсы и профиль. Другие учётки их не видят.</p>
+    </form>
+  </div>
+</div>
+</body>
+</html>{{end}}

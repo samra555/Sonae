@@ -28,6 +28,10 @@ type Profile struct {
 	Profession    string `json:"profession,omitempty"`
 	MaritalStatus string `json:"marital_status,omitempty"`
 	Children      string `json:"children,omitempty"`
+	// Free text: chronic conditions, medications, allergies and the like.
+	Health string `json:"health,omitempty"`
+	// Free text: anything else the user wants the neural net to know.
+	About string `json:"about,omitempty"`
 }
 
 // Allowed values of the profile dropdowns; "" means "not specified".

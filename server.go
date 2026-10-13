@@ -20,13 +20,13 @@ import (
 
 type Server struct {
 	files          fs.FS
-	store          *Store
+	accounts       *Accounts
 	pageTemplates  map[string]*template.Template
 	promptTemplate *texttemplate.Template
 	risksTemplate  *texttemplate.Template
 }
 
-func NewServer(store *Store, files fs.FS) (*Server, error) {
+func NewServer(accounts *Accounts, files fs.FS) (*Server, error) {
 	templateFunctions := template.FuncMap{
 		"percent":  func(probability float64) string { return fmt.Sprintf("%.1f%%", probability*100) },
 		"pctLabel": pctLabel,
@@ -44,7 +44,7 @@ func NewServer(store *Store, files fs.FS) (*Server, error) {
 	}
 
 	pageTemplates := map[string]*template.Template{}
-	for _, pageName := range []string{"index", "case"} {
+	for _, pageName := range []string{"index", "case", "login"} {
 		parsedPage, err := template.New("").Funcs(templateFunctions).
 			ParseFS(files, "templates/layout.html", "templates/"+pageName+".html")
 		if err != nil {
@@ -61,13 +61,22 @@ func NewServer(store *Store, files fs.FS) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{files: files, store: store, pageTemplates: pageTemplates, promptTemplate: promptTemplate, risksTemplate: risksTemplate}, nil
+	return &Server{files: files, accounts: accounts, pageTemplates: pageTemplates, promptTemplate: promptTemplate, risksTemplate: risksTemplate}, nil
 }
 
 func (s *Server) Routes() http.Handler {
+	public := http.NewServeMux()
+	public.Handle("GET /static/", http.FileServerFS(s.files))
+	public.HandleFunc("GET /login", s.handleLoginPage)
+	public.HandleFunc("POST /login", s.handleLogin)
+	public.HandleFunc("POST /register", s.handleRegister)
+	public.HandleFunc("POST /logout", s.handleLogout)
+
+	// Everything else works on one account's data and needs a session.
 	mux := http.NewServeMux()
+	public.Handle("/", s.requireLogin(mux))
+
 	mux.HandleFunc("GET /{$}", s.handleIndex)
-	mux.Handle("GET /static/", http.FileServerFS(s.files))
 	mux.HandleFunc("POST /cases", s.handleCreateCase)
 	mux.HandleFunc("GET /cases/{id}", s.handleCase)
 	mux.HandleFunc("POST /cases/{id}/actions", s.handleCreateAction)
@@ -88,7 +97,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /risks/prompt", s.handleRisksPrompt)
 	mux.HandleFunc("POST /risks/import", s.handleRisksImport)
 	mux.HandleFunc("POST /risks/apply", s.handleRisksApply)
-	return mux
+	return public
 }
 
 // ---- view models ----
@@ -104,6 +113,7 @@ type IndexRow struct {
 }
 
 type IndexView struct {
+	Login              string
 	Profile            Profile
 	Risks, Aspirations []IndexRow
 }
@@ -136,6 +146,7 @@ type ActionView struct {
 }
 
 type CaseView struct {
+	Login   string
 	Case    Case
 	Current float64
 	Actions []ActionView
@@ -293,10 +304,10 @@ func (s *Server) render(w http.ResponseWriter, pageName, templateName string, vi
 	_, _ = renderedPage.WriteTo(w)
 }
 
-func (s *Server) renderCaseBody(w http.ResponseWriter, caseID, notice string) bool {
+func (s *Server) renderCaseBody(w http.ResponseWriter, r *http.Request, caseID, notice string) bool {
 	var caseView CaseView
 	var caseFound bool
-	s.store.Read(func(data *Data) {
+	storeOf(r).Read(func(data *Data) {
 		caseView, caseFound = buildCaseView(data, caseID, notice)
 	})
 	if !caseFound {
@@ -346,8 +357,8 @@ func actionFromForm(r *http.Request) (Action, error) {
 // ---- handlers ----
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	var indexView IndexView
-	s.store.Read(func(data *Data) {
+	indexView := IndexView{Login: loginOf(r)}
+	storeOf(r).Read(func(data *Data) {
 		indexView.Profile = data.Profile
 		for _, listedCase := range data.Cases {
 			doneCount := 0
@@ -377,13 +388,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCase(w http.ResponseWriter, r *http.Request) {
 	var caseView CaseView
 	var caseFound bool
-	s.store.Read(func(data *Data) {
+	storeOf(r).Read(func(data *Data) {
 		caseView, caseFound = buildCaseView(data, r.PathValue("id"), "")
 	})
 	if !caseFound {
 		http.NotFound(w, r)
 		return
 	}
+	caseView.Login = loginOf(r)
 	s.render(w, "case", "layout", caseView)
 }
 
@@ -405,7 +417,7 @@ func (s *Server) handleCreateCase(w http.ResponseWriter, r *http.Request) {
 		BaseSource:      strings.TrimSpace(r.FormValue("base_source")),
 		Actions:         []Action{},
 	}
-	err = s.store.Update(func(data *Data) error {
+	err = storeOf(r).Update(func(data *Data) error {
 		data.Cases = append(data.Cases, newCase)
 		return nil
 	})
@@ -421,7 +433,7 @@ func (s *Server) handleCreateAction(w http.ResponseWriter, r *http.Request) {
 
 	newAction, err := actionFromForm(r)
 	if err == nil {
-		err = s.store.Update(func(data *Data) error {
+		err = storeOf(r).Update(func(data *Data) error {
 			targetCase := data.findCase(caseID)
 			if targetCase == nil {
 				return errCaseNotFound
@@ -435,14 +447,14 @@ func (s *Server) handleCreateAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		notice = err.Error()
 	}
-	s.renderCaseBody(w, caseID, notice)
+	s.renderCaseBody(w, r, caseID, notice)
 }
 
 func (s *Server) handleToggleAction(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 	actionID := r.PathValue("actionID")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		action := data.findAction(actionID)
 		if action == nil {
 			return errActionNotFound
@@ -454,14 +466,14 @@ func (s *Server) handleToggleAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		notice = err.Error()
 	}
-	s.renderCaseBody(w, caseID, notice)
+	s.renderCaseBody(w, r, caseID, notice)
 }
 
 func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	var promptText string
 	var promptErr error
 	caseFound := false
-	s.store.Read(func(data *Data) {
+	storeOf(r).Read(func(data *Data) {
 		targetCase := data.findCase(r.PathValue("id"))
 		if targetCase == nil {
 			return
@@ -486,7 +498,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 
 	var targetCase Case
 	caseFound := false
-	s.store.Read(func(data *Data) {
+	storeOf(r).Read(func(data *Data) {
 		if foundCase := data.findCase(caseID); foundCase != nil {
 			targetCase, caseFound = *foundCase, true
 		}
@@ -538,7 +550,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 
 	reply, err := parseAssistantReply(r.FormValue("reply"))
 	if err == nil {
-		err = s.store.Update(func(data *Data) error {
+		err = storeOf(r).Update(func(data *Data) error {
 			targetCase := data.findCase(caseID)
 			if targetCase == nil {
 				return errCaseNotFound
@@ -555,7 +567,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		notice = err.Error()
 	}
-	if s.renderCaseBody(w, caseID, notice) {
+	if s.renderCaseBody(w, r, caseID, notice) {
 		// Out-of-band swap: clears the import preview next to the refreshed case body.
 		_, _ = io.WriteString(w, `<div id="import-result" hx-swap-oob="true"></div>`)
 	}

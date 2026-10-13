@@ -75,9 +75,9 @@ func cloneData(data Data) (Data, error) {
 	return clone, nil
 }
 
-// Writing to a temp file and renaming it means a crash mid-write cannot corrupt data.json.
-func writeJSONAtomically(path string, data Data) error {
-	encoded, err := json.MarshalIndent(data, "", "  ")
+// Writing to a temp file and renaming it means a crash mid-write cannot corrupt the file.
+func writeJSONAtomically(path string, value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}

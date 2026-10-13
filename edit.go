@@ -86,11 +86,11 @@ func (s *Server) handleUpdateCase(w http.ResponseWriter, r *http.Request) {
 
 	baseProbabilityPercent, err := parseNumber(r.FormValue("base_probability"))
 	if err != nil {
-		s.renderCaseBody(w, caseID, "базовая вероятность: нужно число в процентах")
+		s.renderCaseBody(w, r, caseID, "базовая вероятность: нужно число в процентах")
 		return
 	}
 
-	err = s.store.Update(func(data *Data) error {
+	err = storeOf(r).Update(func(data *Data) error {
 		targetCase := data.findCase(caseID)
 		if targetCase == nil {
 			return errCaseNotFound
@@ -104,13 +104,13 @@ func (s *Server) handleUpdateCase(w http.ResponseWriter, r *http.Request) {
 		targetCase.BaseSource = strings.TrimSpace(r.FormValue("base_source"))
 		return nil
 	})
-	s.renderCaseBody(w, caseID, noticeOf(err))
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 func (s *Server) handleDeleteCase(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		for caseIndex := range data.Cases {
 			if data.Cases[caseIndex].ID != caseID {
 				continue
@@ -133,7 +133,7 @@ func (s *Server) handleDeleteCase(w http.ResponseWriter, r *http.Request) {
 		return errCaseNotFound
 	})
 	if err != nil {
-		s.renderCaseBody(w, caseID, err.Error())
+		s.renderCaseBody(w, r, caseID, err.Error())
 		return
 	}
 
@@ -145,21 +145,21 @@ func (s *Server) handleUpdateAction(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 	actionID := r.PathValue("actionID")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		action := data.findAction(actionID)
 		if action == nil {
 			return errActionNotFound
 		}
 		return applyActionForm(action, r)
 	})
-	s.renderCaseBody(w, caseID, noticeOf(err))
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 func (s *Server) handleDeleteAction(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 	actionID := r.PathValue("actionID")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		for caseIndex := range data.Cases {
 			actions := data.Cases[caseIndex].Actions
 			for actionIndex := range actions {
@@ -175,7 +175,7 @@ func (s *Server) handleDeleteAction(w http.ResponseWriter, r *http.Request) {
 		}
 		return errActionNotFound
 	})
-	s.renderCaseBody(w, caseID, noticeOf(err))
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 // handleLinks adds or removes one requires/excludes link; the target comes from a dropdown of titles.
@@ -186,7 +186,7 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 	operation := r.FormValue("op")
 	targetID := r.FormValue("target")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		action := data.findAction(actionID)
 		if action == nil {
 			return errActionNotFound
@@ -221,7 +221,7 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	})
-	s.renderCaseBody(w, caseID, noticeOf(err))
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 // handleAcceptEstimate copies the stored neural-net estimate into the user's own estimate.
@@ -229,7 +229,7 @@ func (s *Server) handleAcceptEstimate(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 	actionID := r.PathValue("actionID")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		action := data.findAction(actionID)
 		if action == nil {
 			return errActionNotFound
@@ -240,14 +240,14 @@ func (s *Server) handleAcceptEstimate(w http.ResponseWriter, r *http.Request) {
 		action.MyMultiplier = action.LLMMultiplier
 		return nil
 	})
-	s.renderCaseBody(w, caseID, noticeOf(err))
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 func (s *Server) handleCreateStep(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 	actionID := r.PathValue("actionID")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		action := data.findAction(actionID)
 		if action == nil {
 			return errActionNotFound
@@ -264,14 +264,14 @@ func (s *Server) handleCreateStep(w http.ResponseWriter, r *http.Request) {
 		addSteps(action, stepTitles)
 		return nil
 	})
-	s.renderCaseBody(w, caseID, noticeOf(err))
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 func (s *Server) handleToggleStep(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 	actionID := r.PathValue("actionID")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		action := data.findAction(actionID)
 		if action == nil {
 			return errActionNotFound
@@ -282,7 +282,7 @@ func (s *Server) handleToggleStep(w http.ResponseWriter, r *http.Request) {
 		}
 		return data.ToggleStep(action, step)
 	})
-	s.renderCaseBody(w, caseID, noticeOf(err))
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 func (s *Server) handleDeleteStep(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +290,7 @@ func (s *Server) handleDeleteStep(w http.ResponseWriter, r *http.Request) {
 	actionID := r.PathValue("actionID")
 	stepID := r.PathValue("stepID")
 
-	err := s.store.Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		action := data.findAction(actionID)
 		if action == nil {
 			return errActionNotFound
@@ -301,7 +301,7 @@ func (s *Server) handleDeleteStep(w http.ResponseWriter, r *http.Request) {
 		action.Steps = slices.DeleteFunc(action.Steps, func(step Step) bool { return step.ID == stepID })
 		return nil
 	})
-	s.renderCaseBody(w, caseID, noticeOf(err))
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 // writeStatus answers an htmx form with a short coloured message.
@@ -321,7 +321,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.store.Update(func(data *Data) error {
+	err = storeOf(r).Update(func(data *Data) error {
 		data.Profile = Profile{
 			Age:           age,
 			Sex:           r.FormValue("sex"),
@@ -330,6 +330,8 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 			Profession:    strings.TrimSpace(r.FormValue("profession")),
 			MaritalStatus: r.FormValue("marital_status"),
 			Children:      r.FormValue("children"),
+			Health:        strings.TrimSpace(r.FormValue("health")),
+			About:         strings.TrimSpace(r.FormValue("about")),
 		}
 		return nil
 	})

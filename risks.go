@@ -166,7 +166,7 @@ func hasCaseTitled(data *Data, title string) bool {
 func (s *Server) handleRisksPrompt(w http.ResponseWriter, r *http.Request) {
 	var promptText string
 	var promptErr error
-	s.store.Read(func(data *Data) {
+	storeOf(r).Read(func(data *Data) {
 		promptText, promptErr = s.buildRisksPrompt(data, r.FormValue("focus"))
 	})
 	if promptErr != nil {
@@ -186,7 +186,7 @@ func (s *Server) handleRisksImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.Read(func(data *Data) {
+	storeOf(r).Read(func(data *Data) {
 		for riskIndex, risk := range reply.Risks {
 			preview.Rows = append(preview.Rows, RiskRow{
 				Index: riskIndex, SuggestedRisk: risk, Duplicate: hasCaseTitled(data, risk.Title),
@@ -209,7 +209,7 @@ func (s *Server) handleRisksApply(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		estimatedAt := time.Now().Format("2006-01-02")
-		err = s.store.Update(func(data *Data) error {
+		err = storeOf(r).Update(func(data *Data) error {
 			for _, rawIndex := range r.Form["add"] {
 				riskIndex, err := strconv.Atoi(rawIndex)
 				if err != nil || riskIndex < 0 || riskIndex >= len(reply.Risks) {
