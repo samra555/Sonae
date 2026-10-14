@@ -15,11 +15,6 @@ const (
 	KindAspiration Kind = "aspiration"
 )
 
-const (
-	minMultiplier = 0.01
-	maxMultiplier = 5.0
-)
-
 type Profile struct {
 	Age           int    `json:"age"`
 	Sex           string `json:"sex,omitempty"`
@@ -41,7 +36,7 @@ var (
 	childrenOptions      = []string{"", "no", "yes"}
 )
 
-// Step is one item of an action's checklist. Steps do not affect the probability:
+// Step is one item of an action's checklist. Steps do not affect the numbers:
 // only the action does, and it is marked done automatically once every step is done.
 type Step struct {
 	ID    string `json:"id"`
@@ -57,16 +52,16 @@ type Action struct {
 	Excludes []string `json:"excludes,omitempty"`
 	Steps    []Step   `json:"steps,omitempty"`
 
-	// MyMultiplier is the only number used in the probability calculation.
-	MyMultiplier *float64 `json:"my_multiplier,omitempty"`
+	// Weight is the only number used in the calculation; see percent.go for what it means.
+	Weight *float64 `json:"weight,omitempty"`
 
 	// The neural net's estimate is stored next to it, but never counted until the user accepts it.
-	LLMMultiplier *float64 `json:"llm_multiplier,omitempty"`
-	Confidence    string   `json:"confidence,omitempty"`
-	Reasoning     string   `json:"reasoning,omitempty"`
-	Sources       []string `json:"sources,omitempty"`
-	OverlapsWith  []string `json:"overlaps_with,omitempty"`
-	EstimatedAt   string   `json:"estimated_at,omitempty"`
+	LLMWeight    *float64 `json:"llm_weight,omitempty"`
+	Confidence   string   `json:"confidence,omitempty"`
+	Reasoning    string   `json:"reasoning,omitempty"`
+	Sources      []string `json:"sources,omitempty"`
+	OverlapsWith []string `json:"overlaps_with,omitempty"`
+	EstimatedAt  string   `json:"estimated_at,omitempty"`
 }
 
 type Case struct {
@@ -76,8 +71,8 @@ type Case struct {
 	Title           string   `json:"title"`
 	Description     string   `json:"description,omitempty"`
 	Horizon         string   `json:"horizon"`
-	BaseProbability float64  `json:"base_probability"`
-	BaseSource      string   `json:"base_source"`
+	BaseProbability float64  `json:"base_probability"` // risks only; an aspiration starts from 0% done
+	BaseSource      string   `json:"base_source"`      // risks only
 	Actions         []Action `json:"actions"`
 }
 
@@ -92,23 +87,43 @@ var (
 	errStepNotFound   = errors.New("шаг не найден")
 )
 
-// CurrentProbability multiplies the base probability by the multipliers of done actions.
-// Multipliers (not percentage-point deltas) are used so the result stays meaningful
-// no matter how many actions are combined.
-func (c Case) CurrentProbability() float64 {
-	probability := c.BaseProbability
-	for _, action := range c.Actions {
-		if !action.Done || action.MyMultiplier == nil {
-			continue
-		}
-		probability *= *action.MyMultiplier
-	}
+func (c Case) IsAspiration() bool {
+	return c.Kind == KindAspiration
+}
 
-	maxProbability := 1.0
-	if c.Kind == KindAspiration {
-		maxProbability = 0.99
+// doneWeightSum adds up the weights of done actions, in percent.
+func (c Case) doneWeightSum() float64 {
+	sum := 0.0
+	for _, action := range c.Actions {
+		if action.Done && action.Weight != nil {
+			sum += *action.Weight
+		}
 	}
-	return math.Min(math.Max(probability, 0), maxProbability)
+	return sum
+}
+
+// CurrentProbability of a risk: the base plus the weights (percentage points) of done actions,
+// kept within 0..100%.
+func (c Case) CurrentProbability() float64 {
+	probability := c.BaseProbability + c.doneWeightSum()/100
+	return math.Min(math.Max(probability, 0), 1)
+}
+
+// Completion of an aspiration, from 0 to 1: the weights of done actions. Steps of an unfinished
+// action do not count.
+func (c Case) Completion() float64 {
+	return math.Min(math.Max(c.doneWeightSum()/100, 0), 1)
+}
+
+// WeightSum adds up the weights of all actions; for an aspiration it should be 100.
+func (c Case) WeightSum() float64 {
+	sum := 0.0
+	for _, action := range c.Actions {
+		if action.Weight != nil {
+			sum += *action.Weight
+		}
+	}
+	return sum
 }
 
 func (d *Data) findCase(caseID string) *Case {
@@ -230,13 +245,6 @@ func (d *Data) ToggleStep(action *Action, step *Step) error {
 	return nil
 }
 
-func validMultiplier(multiplier *float64) bool {
-	if multiplier == nil {
-		return true
-	}
-	return *multiplier >= minMultiplier && *multiplier <= maxMultiplier
-}
-
 func validConfidence(confidence string) bool {
 	return confidence == "low" || confidence == "medium" || confidence == "high"
 }
@@ -280,8 +288,8 @@ func (d *Data) Validate() error {
 			if strings.TrimSpace(action.Title) == "" {
 				return fmt.Errorf("действие %q: пустое название", action.ID)
 			}
-			if !validMultiplier(action.LLMMultiplier) || !validMultiplier(action.MyMultiplier) {
-				return fmt.Errorf("действие %q: множитель вне диапазона %.2f–%.0f", action.ID, minMultiplier, maxMultiplier)
+			if !validWeight(currentCase.Kind, action.Weight) || !validWeight(currentCase.Kind, action.LLMWeight) {
+				return fmt.Errorf("действие «%s»: %w", action.Title, weightError(currentCase.Kind))
 			}
 			stepIDs := map[string]bool{}
 			for _, step := range action.Steps {
@@ -356,18 +364,4 @@ func (c Case) ProgressPercent() int {
 		return 0
 	}
 	return c.DoneCount() * 100 / len(c.Actions)
-}
-
-// DeltaPoints is the change from the base probability in percentage points.
-func (c Case) DeltaPoints() float64 {
-	return (c.CurrentProbability() - c.BaseProbability) * 100
-}
-
-// Improved says whether the change is in the desired direction:
-// lower for a risk, higher for an aspiration.
-func (c Case) Improved() bool {
-	if c.Kind == KindRisk {
-		return c.DeltaPoints() < 0
-	}
-	return c.DeltaPoints() > 0
 }

@@ -55,19 +55,54 @@ func (d *Data) referencedBy(targetID string, ignoredIDs []string) *Action {
 	return nil
 }
 
-func applyActionForm(action *Action, r *http.Request) error {
+// applyActionForm copies the title and the weight from the form. The allowed weights depend on
+// the kind of the case, so the case is needed too.
+func applyActionForm(action *Action, kind Kind, r *http.Request) error {
 	title := strings.TrimSpace(r.FormValue("title"))
 	if title == "" {
 		return errors.New("у действия должно быть название")
 	}
 
-	effectPercent, err := parseOptionalNumber(r.FormValue("effect_percent"))
-	if err != nil || !validEffectPercent(effectPercent) {
-		return fmt.Errorf("прикидка: число от %.0f до %.0f, например −10 или +30", minEffectPercent, maxEffectPercent)
+	weight, err := parseOptionalNumber(r.FormValue("weight"))
+	if err != nil || !validWeight(kind, weight) {
+		return weightError(kind)
 	}
 
 	action.Title = title
-	action.MyMultiplier = multiplierFromPercent(effectPercent)
+	action.Weight = weight
+	return nil
+}
+
+// caseOfAction finds the case that holds the action.
+func (d *Data) caseOfAction(actionID string) *Case {
+	for caseIndex := range d.Cases {
+		for _, action := range d.Cases[caseIndex].Actions {
+			if action.ID == actionID {
+				return &d.Cases[caseIndex]
+			}
+		}
+	}
+	return nil
+}
+
+// applyCaseForm copies the case fields from the form. Only a risk has a base probability:
+// an aspiration starts from 0% done, so its base fields are not read.
+func applyCaseForm(targetCase *Case, r *http.Request) error {
+	targetCase.Kind = Kind(r.FormValue("kind"))
+	targetCase.Category = strings.TrimSpace(r.FormValue("category"))
+	targetCase.Title = strings.TrimSpace(r.FormValue("title"))
+	targetCase.Description = strings.TrimSpace(r.FormValue("description"))
+	targetCase.Horizon = strings.TrimSpace(r.FormValue("horizon"))
+
+	if targetCase.Kind != KindRisk {
+		return nil
+	}
+	baseProbabilityPercent, err := parseNumber(r.FormValue("base_probability"))
+	if err != nil {
+		return errors.New("базовая вероятность: нужно число в процентах")
+	}
+	targetCase.BaseProbability = baseProbabilityPercent / 100
+	targetCase.BaseSource = strings.TrimSpace(r.FormValue("base_source"))
 	return nil
 }
 
@@ -84,25 +119,12 @@ func linkedIDsOf(action *Action, linkKind string) (*[]string, error) {
 func (s *Server) handleUpdateCase(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 
-	baseProbabilityPercent, err := parseNumber(r.FormValue("base_probability"))
-	if err != nil {
-		s.renderCaseBody(w, r, caseID, "базовая вероятность: нужно число в процентах")
-		return
-	}
-
-	err = storeOf(r).Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		targetCase := data.findCase(caseID)
 		if targetCase == nil {
 			return errCaseNotFound
 		}
-		targetCase.Kind = Kind(r.FormValue("kind"))
-		targetCase.Category = strings.TrimSpace(r.FormValue("category"))
-		targetCase.Title = strings.TrimSpace(r.FormValue("title"))
-		targetCase.Description = strings.TrimSpace(r.FormValue("description"))
-		targetCase.Horizon = strings.TrimSpace(r.FormValue("horizon"))
-		targetCase.BaseProbability = baseProbabilityPercent / 100
-		targetCase.BaseSource = strings.TrimSpace(r.FormValue("base_source"))
-		return nil
+		return applyCaseForm(targetCase, r)
 	})
 	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
@@ -150,7 +172,7 @@ func (s *Server) handleUpdateAction(w http.ResponseWriter, r *http.Request) {
 		if action == nil {
 			return errActionNotFound
 		}
-		return applyActionForm(action, r)
+		return applyActionForm(action, data.caseOfAction(actionID).Kind, r)
 	})
 	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
@@ -224,7 +246,7 @@ func (s *Server) handleLinks(w http.ResponseWriter, r *http.Request) {
 	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
-// handleAcceptEstimate copies the stored neural-net estimate into the user's own estimate.
+// handleAcceptEstimate copies the stored neural-net weight into the user's own weight.
 func (s *Server) handleAcceptEstimate(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 	actionID := r.PathValue("actionID")
@@ -234,10 +256,31 @@ func (s *Server) handleAcceptEstimate(w http.ResponseWriter, r *http.Request) {
 		if action == nil {
 			return errActionNotFound
 		}
-		if action.LLMMultiplier == nil {
+		if action.LLMWeight == nil {
 			return errors.New("у этого действия нет оценки нейросети")
 		}
-		action.MyMultiplier = action.LLMMultiplier
+		action.Weight = action.LLMWeight
+		return nil
+	})
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
+}
+
+// handleAcceptAllEstimates takes the neural net's weight for every action of the case that has one.
+// It is handy for an aspiration, whose weights only make sense together (they add up to 100).
+func (s *Server) handleAcceptAllEstimates(w http.ResponseWriter, r *http.Request) {
+	caseID := r.PathValue("id")
+
+	err := storeOf(r).Update(func(data *Data) error {
+		targetCase := data.findCase(caseID)
+		if targetCase == nil {
+			return errCaseNotFound
+		}
+		for actionIndex := range targetCase.Actions {
+			action := &targetCase.Actions[actionIndex]
+			if action.LLMWeight != nil {
+				action.Weight = action.LLMWeight
+			}
+		}
 		return nil
 	})
 	s.renderCaseBody(w, r, caseID, noticeOf(err))

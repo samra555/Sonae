@@ -49,11 +49,11 @@ func (s *Server) buildRisksPrompt(data *Data, focus string) (string, error) {
 // ---- reply (what the neural net sends back) ----
 
 type RiskAction struct {
-	Title         string   `json:"title"`
-	EffectPercent *float64 `json:"effect_percent"`
-	Confidence    string   `json:"confidence"`
-	Reasoning     string   `json:"reasoning"`
-	Sources       []string `json:"sources"`
+	Title      string   `json:"title"`
+	Weight     *float64 `json:"weight"`
+	Confidence string   `json:"confidence"`
+	Reasoning  string   `json:"reasoning"`
+	Sources    []string `json:"sources"`
 }
 
 type SuggestedRisk struct {
@@ -97,9 +97,8 @@ func (reply RisksReply) Validate() error {
 			if strings.TrimSpace(action.Title) == "" {
 				return fmt.Errorf("риск №%d, действие №%d: пустое название", position, actionIndex+1)
 			}
-			if !validEffectPercent(action.EffectPercent) {
-				return fmt.Errorf("риск №%d, действие №%d: effect_percent вне диапазона %.0f…%.0f",
-					position, actionIndex+1, minEffectPercent, maxEffectPercent)
+			if !validWeight(KindRisk, action.Weight) {
+				return fmt.Errorf("риск №%d, действие №%d: %w", position, actionIndex+1, weightError(KindRisk))
 			}
 			if !validConfidence(action.Confidence) {
 				return fmt.Errorf("риск №%d, действие №%d: confidence должен быть low, medium или high", position, actionIndex+1)
@@ -109,8 +108,8 @@ func (reply RisksReply) Validate() error {
 	return nil
 }
 
-// caseFromRisk turns a suggested risk into a new case. The neural net's effects go into
-// llm_multiplier only, so nothing counts until the user accepts it, as with any other estimate.
+// caseFromRisk turns a suggested risk into a new case. The neural net's weights go into
+// llm_weight only, so nothing counts until the user accepts it, as with any other estimate.
 func caseFromRisk(risk SuggestedRisk, estimatedAt string) Case {
 	newCase := Case{
 		ID:              newID("c"),
@@ -125,13 +124,13 @@ func caseFromRisk(risk SuggestedRisk, estimatedAt string) Case {
 	}
 	for _, riskAction := range risk.Actions {
 		newCase.Actions = append(newCase.Actions, Action{
-			ID:            newID("a"),
-			Title:         strings.TrimSpace(riskAction.Title),
-			LLMMultiplier: multiplierFromPercent(riskAction.EffectPercent),
-			Confidence:    riskAction.Confidence,
-			Reasoning:     riskAction.Reasoning,
-			Sources:       riskAction.Sources,
-			EstimatedAt:   estimatedAt,
+			ID:          newID("a"),
+			Title:       strings.TrimSpace(riskAction.Title),
+			LLMWeight:   riskAction.Weight,
+			Confidence:  riskAction.Confidence,
+			Reasoning:   riskAction.Reasoning,
+			Sources:     riskAction.Sources,
+			EstimatedAt: estimatedAt,
 		})
 	}
 	return newCase

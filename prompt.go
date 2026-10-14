@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	texttemplate "text/template"
@@ -13,14 +14,15 @@ import (
 // ---- request (what we send to the neural net) ----
 
 type exportCase struct {
-	ID              string  `json:"id"`
-	Kind            Kind    `json:"kind"`
-	Category        string  `json:"category"`
-	Title           string  `json:"title"`
-	Description     string  `json:"description"`
-	Horizon         string  `json:"horizon"`
-	BaseProbability float64 `json:"base_probability"`
-	BaseSource      string  `json:"base_source"`
+	ID          string `json:"id"`
+	Kind        Kind   `json:"kind"`
+	Category    string `json:"category"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Horizon     string `json:"horizon"`
+	// Risks only: an aspiration has no base probability.
+	BaseProbabilityPercent *float64 `json:"base_probability_percent,omitempty"`
+	BaseSource             string   `json:"base_source,omitempty"`
 }
 
 type exportStep struct {
@@ -29,13 +31,13 @@ type exportStep struct {
 }
 
 type exportAction struct {
-	ID              string       `json:"id"`
-	Title           string       `json:"title"`
-	Done            bool         `json:"done"`
-	Steps           []exportStep `json:"steps"`
-	Requires        []string     `json:"requires"`
-	Excludes        []string     `json:"excludes"`
-	MyEffectPercent *float64     `json:"my_effect_percent"`
+	ID       string       `json:"id"`
+	Title    string       `json:"title"`
+	Done     bool         `json:"done"`
+	Steps    []exportStep `json:"steps"`
+	Requires []string     `json:"requires"`
+	Excludes []string     `json:"excludes"`
+	MyWeight *float64     `json:"my_weight"`
 }
 
 type estimateRequest struct {
@@ -54,19 +56,22 @@ func orEmpty(ids []string) []string {
 
 func buildPrompt(promptTemplate *texttemplate.Template, profile Profile, targetCase Case) (string, error) {
 	request := estimateRequest{
-		Task:    "estimate_action_effects",
+		Task:    "estimate_action_weights",
 		Profile: profile,
 		Case: exportCase{
-			ID:              targetCase.ID,
-			Kind:            targetCase.Kind,
-			Category:        targetCase.Category,
-			Title:           targetCase.Title,
-			Description:     targetCase.Description,
-			Horizon:         targetCase.Horizon,
-			BaseProbability: targetCase.BaseProbability,
-			BaseSource:      targetCase.BaseSource,
+			ID:          targetCase.ID,
+			Kind:        targetCase.Kind,
+			Category:    targetCase.Category,
+			Title:       targetCase.Title,
+			Description: targetCase.Description,
+			Horizon:     targetCase.Horizon,
 		},
 		Actions: []exportAction{},
+	}
+	if !targetCase.IsAspiration() {
+		basePercent := math.Round(targetCase.BaseProbability*100*10000) / 10000
+		request.Case.BaseProbabilityPercent = &basePercent
+		request.Case.BaseSource = targetCase.BaseSource
 	}
 	for _, action := range targetCase.Actions {
 		steps := []exportStep{}
@@ -74,18 +79,19 @@ func buildPrompt(promptTemplate *texttemplate.Template, profile Profile, targetC
 			steps = append(steps, exportStep{Title: step.Title, Done: step.Done})
 		}
 		request.Actions = append(request.Actions, exportAction{
-			ID:              action.ID,
-			Title:           action.Title,
-			Done:            action.Done,
-			Steps:           steps,
-			Requires:        orEmpty(action.Requires),
-			Excludes:        orEmpty(action.Excludes),
-			MyEffectPercent: optionalPercent(action.MyMultiplier),
+			ID:       action.ID,
+			Title:    action.Title,
+			Done:     action.Done,
+			Steps:    steps,
+			Requires: orEmpty(action.Requires),
+			Excludes: orEmpty(action.Excludes),
+			MyWeight: action.Weight,
 		})
 	}
 
-	// Only aspirations ask for a breakdown into steps: there the user works through a plan.
-	return renderPrompt(promptTemplate, request, targetCase.Kind == KindAspiration)
+	// The template has separate instructions for an aspiration: weights are shares of the goal
+	// there, and the neural net also breaks actions into steps.
+	return renderPrompt(promptTemplate, request, targetCase.IsAspiration())
 }
 
 // renderPrompt puts the request JSON into the template; the template sees .JSON and .Aspiration.
@@ -110,7 +116,7 @@ func renderPrompt(promptTemplate *texttemplate.Template, request any, aspiration
 
 type ActionEstimate struct {
 	ID             string   `json:"id"`
-	EffectPercent  *float64 `json:"effect_percent"`
+	Weight         *float64 `json:"weight"`
 	Confidence     string   `json:"confidence"`
 	Reasoning      string   `json:"reasoning"`
 	Sources        []string `json:"sources"`
@@ -120,17 +126,17 @@ type ActionEstimate struct {
 
 type SuggestedAction struct {
 	Title          string   `json:"title"`
-	EffectPercent  *float64 `json:"effect_percent"`
+	Weight         *float64 `json:"weight"`
 	Confidence     string   `json:"confidence"`
 	Reasoning      string   `json:"reasoning"`
 	SuggestedSteps []string `json:"suggested_steps"`
 }
 
 type AssistantReply struct {
-	CaseID                 string            `json:"case_id"`
-	Actions                []ActionEstimate  `json:"actions"`
-	SuggestedActions       []SuggestedAction `json:"suggested_actions"`
-	BaseProbabilityComment string            `json:"base_probability_comment"`
+	CaseID           string            `json:"case_id"`
+	Actions          []ActionEstimate  `json:"actions"`
+	SuggestedActions []SuggestedAction `json:"suggested_actions"`
+	Comment          string            `json:"comment"`
 }
 
 // decodeReply takes everything between the first "{" and the last "}", so it
@@ -176,8 +182,8 @@ func (reply AssistantReply) Validate(targetCase Case) error {
 		}
 		seenActionIDs[estimate.ID] = true
 
-		if !validEffectPercent(estimate.EffectPercent) {
-			return fmt.Errorf("действие %q: effect_percent вне диапазона %.0f…%.0f", estimate.ID, minEffectPercent, maxEffectPercent)
+		if !validWeight(targetCase.Kind, estimate.Weight) {
+			return fmt.Errorf("действие %q: %w", estimate.ID, weightError(targetCase.Kind))
 		}
 		if !validConfidence(estimate.Confidence) {
 			return fmt.Errorf("действие %q: confidence должен быть low, medium или high", estimate.ID)
@@ -194,8 +200,8 @@ func (reply AssistantReply) Validate(targetCase Case) error {
 		if strings.TrimSpace(suggested.Title) == "" {
 			return fmt.Errorf("предложенное действие №%d: пустое название", position)
 		}
-		if !validEffectPercent(suggested.EffectPercent) {
-			return fmt.Errorf("предложенное действие №%d: effect_percent вне диапазона", position)
+		if !validWeight(targetCase.Kind, suggested.Weight) {
+			return fmt.Errorf("предложенное действие №%d: %w", position, weightError(targetCase.Kind))
 		}
 		if !validConfidence(suggested.Confidence) {
 			return fmt.Errorf("предложенное действие №%d: неверный confidence", position)
@@ -250,10 +256,10 @@ func applyReply(targetCase *Case, reply AssistantReply, selection ApplySelection
 		}
 		addSteps(action, chosenSteps)
 
-		if !selection.ActionIDs[estimate.ID] || estimate.EffectPercent == nil {
+		if !selection.ActionIDs[estimate.ID] || estimate.Weight == nil {
 			continue
 		}
-		action.LLMMultiplier = multiplierFromPercent(estimate.EffectPercent)
+		action.LLMWeight = estimate.Weight
 		action.Confidence = estimate.Confidence
 		action.Reasoning = estimate.Reasoning
 		action.Sources = estimate.Sources
@@ -266,12 +272,12 @@ func applyReply(targetCase *Case, reply AssistantReply, selection ApplySelection
 			continue
 		}
 		newAction := Action{
-			ID:            newID("a"),
-			Title:         suggested.Title,
-			LLMMultiplier: multiplierFromPercent(suggested.EffectPercent),
-			Confidence:    suggested.Confidence,
-			Reasoning:     suggested.Reasoning,
-			EstimatedAt:   estimatedAt,
+			ID:          newID("a"),
+			Title:       suggested.Title,
+			LLMWeight:   suggested.Weight,
+			Confidence:  suggested.Confidence,
+			Reasoning:   suggested.Reasoning,
+			EstimatedAt: estimatedAt,
 		}
 		addSteps(&newAction, suggested.SuggestedSteps)
 		targetCase.Actions = append(targetCase.Actions, newAction)

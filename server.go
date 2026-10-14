@@ -5,11 +5,11 @@ import (
 	"cmp"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -28,13 +28,15 @@ type Server struct {
 
 func NewServer(accounts *Accounts, files fs.FS) (*Server, error) {
 	templateFunctions := template.FuncMap{
-		"percent":  func(probability float64) string { return fmt.Sprintf("%.1f%%", probability*100) },
-		"pctLabel": pctLabel,
-		"deltaPoints": func(points *float64) string {
-			if points == nil {
-				return "—"
-			}
-			return fmt.Sprintf("%+.1f п.п.", *points)
+		"percent":     func(probability float64) string { return fmt.Sprintf("%.1f%%", probability*100) },
+		"pctLabel":    pctLabel,
+		"weightLabel": weightLabel,
+		// weightInput bundles what the "weight-input" template needs: templates take one argument.
+		"weightInput": func(targetCase Case, weight *float64) any {
+			return struct {
+				Case   Case
+				Weight *float64
+			}{targetCase, weight}
 		},
 		"join":         strings.Join,
 		"numStr":       numStr,
@@ -90,6 +92,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/delete", s.handleDeleteAction)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/links", s.handleLinks)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/accept", s.handleAcceptEstimate)
+	mux.HandleFunc("POST /cases/{id}/accept-all", s.handleAcceptAllEstimates)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/steps", s.handleCreateStep)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/steps/{stepID}/toggle", s.handleToggleStep)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/steps/{stepID}/delete", s.handleDeleteStep)
@@ -105,11 +108,10 @@ func (s *Server) Routes() http.Handler {
 type IndexRow struct {
 	Kind                         Kind
 	ID, Title, Category, Horizon string
-	Base, Current                float64
+	Base, Current                float64 // risks
+	Completion                   float64 // aspirations
 	DoneCount, TotalCount        int
 	ProgressPercent              int
-	DeltaPoints                  float64
-	Improved                     bool
 }
 
 type IndexView struct {
@@ -131,34 +133,32 @@ type ActionView struct {
 	Action
 	Blocked         bool
 	BlockReason     string
-	MyPercent       *float64
-	LLMPercent      *float64
 	CanAccept       bool
-	DeltaPoints     *float64
-	Good            bool
 	OverlapTitles   []string
 	RequiresChips   []LinkOption
 	ExcludesChips   []LinkOption
 	RequiresOptions []LinkGroup
 	ExcludesOptions []LinkGroup
-
-	benefit float64
 }
 
 type CaseView struct {
-	Login   string
-	Case    Case
-	Current float64
-	Actions []ActionView
-	Notice  string
-	Profile Profile
+	Login      string
+	Case       Case
+	Current    float64 // risks
+	Completion float64 // aspirations
+	// WeightSum and WeightSumOff: an aspiration's weights should add up to 100.
+	WeightSum    float64
+	WeightSumOff bool
+	CanAcceptAny bool
+	Actions      []ActionView
+	Notice       string
+	Profile      Profile
 }
 
 type PreviewRow struct {
 	ActionID   string
 	Title      string
-	MyPercent  *float64
-	LLMPercent *float64
+	MyWeight   *float64
 	Estimate   ActionEstimate
 	Applicable bool
 }
@@ -170,6 +170,7 @@ type SuggestedRow struct {
 
 type ImportPreview struct {
 	CaseID    string
+	Kind      Kind
 	RawReply  string
 	Error     string
 	Rows      []PreviewRow
@@ -218,57 +219,62 @@ func buildCaseView(data *Data, caseID, notice string) (CaseView, bool) {
 		return CaseView{}, false
 	}
 
-	actionViews := make([]ActionView, 0, len(foundCase.Actions))
+	caseView := CaseView{
+		Case:       *foundCase,
+		Current:    foundCase.CurrentProbability(),
+		Completion: foundCase.Completion(),
+		WeightSum:  foundCase.WeightSum(),
+		Actions:    make([]ActionView, 0, len(foundCase.Actions)),
+		Notice:     notice,
+		Profile:    data.Profile,
+	}
+	caseView.WeightSumOff = foundCase.IsAspiration() && len(foundCase.Actions) > 0 &&
+		math.Abs(caseView.WeightSum-100) > 0.001
+
 	for _, action := range foundCase.Actions {
 		actionView := ActionView{
 			Action:          action,
-			MyPercent:       optionalPercent(action.MyMultiplier),
-			LLMPercent:      optionalPercent(action.LLMMultiplier),
-			CanAccept:       action.LLMMultiplier != nil && !sameNumber(action.LLMMultiplier, action.MyMultiplier),
+			CanAccept:       action.LLMWeight != nil && !sameNumber(action.LLMWeight, action.Weight),
 			RequiresChips:   linkChips(data, action.Requires),
 			ExcludesChips:   linkChips(data, action.Excludes),
 			RequiresOptions: linkGroups(data, foundCase.ID, action.ID, action.Requires),
 			ExcludesOptions: linkGroups(data, foundCase.ID, action.ID, action.Excludes),
 		}
+		caseView.CanAcceptAny = caseView.CanAcceptAny || actionView.CanAccept
 
 		if !action.Done {
 			actionView.BlockReason = data.BlockReason(&action)
 			actionView.Blocked = actionView.BlockReason != ""
 		}
-		if action.MyMultiplier != nil {
-			deltaPoints := foundCase.BaseProbability * (*action.MyMultiplier - 1) * 100
-			actionView.DeltaPoints = &deltaPoints
-			actionView.benefit = deltaPoints
-			if foundCase.Kind == KindRisk {
-				actionView.benefit = -deltaPoints
-			}
-			actionView.Good = actionView.benefit > 0
-		}
 		for _, overlapID := range action.OverlapsWith {
 			actionView.OverlapTitles = append(actionView.OverlapTitles, data.titleOf(overlapID))
 		}
-		actionViews = append(actionViews, actionView)
+		caseView.Actions = append(caseView.Actions, actionView)
 	}
 
-	// Biggest benefit first; actions without an estimate go last. The sort is stable,
-	// so equal effects keep their order from the file.
-	slices.SortStableFunc(actionViews, func(first, second ActionView) int {
-		if (first.DeltaPoints == nil) != (second.DeltaPoints == nil) {
-			if first.DeltaPoints == nil {
+	// Biggest benefit first: for a risk the most negative weight (it lowers the probability most),
+	// for an aspiration the biggest share of the goal. Actions without a weight go last.
+	// The sort is stable, so equal weights keep their order from the file.
+	benefit := func(weight float64) float64 {
+		if foundCase.IsAspiration() {
+			return weight
+		}
+		return -weight
+	}
+	slices.SortStableFunc(caseView.Actions, func(first, second ActionView) int {
+		if (first.Weight == nil) != (second.Weight == nil) {
+			if first.Weight == nil {
 				return 1
 			}
 			return -1
 		}
-		return cmp.Compare(second.benefit, first.benefit)
+		if first.Weight == nil {
+			return 0
+		}
+		return cmp.Compare(benefit(*second.Weight), benefit(*first.Weight))
 	})
 
-	return CaseView{
-		Case:    *foundCase,
-		Current: foundCase.CurrentProbability(),
-		Actions: actionViews,
-		Notice:  notice,
-		Profile: data.Profile,
-	}, true
+	return caseView, true
 }
 
 func buildPreviewRows(targetCase Case, reply AssistantReply) []PreviewRow {
@@ -283,10 +289,9 @@ func buildPreviewRows(targetCase Case, reply AssistantReply) []PreviewRow {
 		rows = append(rows, PreviewRow{
 			ActionID:   action.ID,
 			Title:      action.Title,
-			MyPercent:  optionalPercent(action.MyMultiplier),
-			LLMPercent: optionalPercent(action.LLMMultiplier),
+			MyWeight:   action.Weight,
 			Estimate:   estimate,
-			Applicable: estimate.EffectPercent != nil,
+			Applicable: estimate.Weight != nil,
 		})
 	}
 	return rows
@@ -341,19 +346,6 @@ func parseOptionalNumber(rawNumber string) (*float64, error) {
 	return &number, nil
 }
 
-func actionFromForm(r *http.Request) (Action, error) {
-	title := strings.TrimSpace(r.FormValue("title"))
-	if title == "" {
-		return Action{}, errors.New("у действия должно быть название")
-	}
-
-	effectPercent, err := parseOptionalNumber(r.FormValue("effect_percent"))
-	if err != nil || !validEffectPercent(effectPercent) {
-		return Action{}, fmt.Errorf("прикидка: число от %.0f до %.0f, например −10 или +30", minEffectPercent, maxEffectPercent)
-	}
-	return Action{ID: newID("a"), Title: title, MyMultiplier: multiplierFromPercent(effectPercent)}, nil
-}
-
 // ---- handlers ----
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -361,25 +353,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	storeOf(r).Read(func(data *Data) {
 		indexView.Profile = data.Profile
 		for _, listedCase := range data.Cases {
-			doneCount := 0
-			for _, action := range listedCase.Actions {
-				if action.Done {
-					doneCount++
-				}
-			}
 			row := IndexRow{
 				ID: listedCase.ID, Kind: listedCase.Kind, Title: listedCase.Title, Category: listedCase.Category, Horizon: listedCase.Horizon,
 				Base: listedCase.BaseProbability, Current: listedCase.CurrentProbability(),
-				DoneCount: doneCount, TotalCount: len(listedCase.Actions),
+				Completion: listedCase.Completion(),
+				DoneCount:  listedCase.DoneCount(), TotalCount: len(listedCase.Actions),
 				ProgressPercent: listedCase.ProgressPercent(),
-				DeltaPoints:     listedCase.DeltaPoints(),
-				Improved:        listedCase.Improved(),
 			}
-			if listedCase.Kind == KindRisk {
-				indexView.Risks = append(indexView.Risks, row)
+			if listedCase.IsAspiration() {
+				indexView.Aspirations = append(indexView.Aspirations, row)
 				continue
 			}
-			indexView.Aspirations = append(indexView.Aspirations, row)
+			indexView.Risks = append(indexView.Risks, row)
 		}
 	})
 	s.render(w, "index", "layout", indexView)
@@ -400,24 +385,13 @@ func (s *Server) handleCase(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateCase(w http.ResponseWriter, r *http.Request) {
-	baseProbabilityPercent, err := parseNumber(r.FormValue("base_probability"))
-	if err != nil {
-		http.Error(w, "базовая вероятность: нужно число в процентах", http.StatusBadRequest)
+	newCase := Case{ID: newID("c"), Actions: []Action{}}
+	if err := applyCaseForm(&newCase, r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	newCase := Case{
-		ID:              newID("c"),
-		Kind:            Kind(r.FormValue("kind")),
-		Category:        strings.TrimSpace(r.FormValue("category")),
-		Title:           strings.TrimSpace(r.FormValue("title")),
-		Description:     strings.TrimSpace(r.FormValue("description")),
-		Horizon:         strings.TrimSpace(r.FormValue("horizon")),
-		BaseProbability: baseProbabilityPercent / 100,
-		BaseSource:      strings.TrimSpace(r.FormValue("base_source")),
-		Actions:         []Action{},
-	}
-	err = storeOf(r).Update(func(data *Data) error {
+	err := storeOf(r).Update(func(data *Data) error {
 		data.Cases = append(data.Cases, newCase)
 		return nil
 	})
@@ -431,23 +405,19 @@ func (s *Server) handleCreateCase(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateAction(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 
-	newAction, err := actionFromForm(r)
-	if err == nil {
-		err = storeOf(r).Update(func(data *Data) error {
-			targetCase := data.findCase(caseID)
-			if targetCase == nil {
-				return errCaseNotFound
-			}
-			targetCase.Actions = append(targetCase.Actions, newAction)
-			return nil
-		})
-	}
-
-	notice := ""
-	if err != nil {
-		notice = err.Error()
-	}
-	s.renderCaseBody(w, r, caseID, notice)
+	err := storeOf(r).Update(func(data *Data) error {
+		targetCase := data.findCase(caseID)
+		if targetCase == nil {
+			return errCaseNotFound
+		}
+		newAction := Action{ID: newID("a")}
+		if err := applyActionForm(&newAction, targetCase.Kind, r); err != nil {
+			return err
+		}
+		targetCase.Actions = append(targetCase.Actions, newAction)
+		return nil
+	})
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
 func (s *Server) handleToggleAction(w http.ResponseWriter, r *http.Request) {
@@ -508,7 +478,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	preview := ImportPreview{CaseID: caseID, RawReply: r.FormValue("reply")}
+	preview := ImportPreview{CaseID: caseID, Kind: targetCase.Kind, RawReply: r.FormValue("reply")}
 
 	reply, err := parseAssistantReply(preview.RawReply)
 	if err == nil {
@@ -521,7 +491,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	preview.Rows = buildPreviewRows(targetCase, reply)
-	preview.Comment = reply.BaseProbabilityComment
+	preview.Comment = reply.Comment
 	for suggestedIndex, suggested := range reply.SuggestedActions {
 		preview.Suggested = append(preview.Suggested, SuggestedRow{Index: suggestedIndex, SuggestedAction: suggested})
 	}

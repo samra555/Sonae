@@ -5,17 +5,25 @@
 <a class="card {{.Kind}}" href="/cases/{{.ID}}">
   <div class="card-title">{{.Title}}</div>
   <div class="chips">{{if .Category}}<span>{{.Category}}</span>{{end}}<span>период: {{.Horizon}}</span></div>
+  {{if eq .Kind "aspiration"}}
+  <div class="prob-row">
+    <span class="prob-now">{{percent .Completion}}</span>
+    <span class="prob-base">выполнено из 100%</span>
+  </div>
+  <div class="progress">
+    <div class="progress-label"><span>Выполнено действий</span><span>{{.DoneCount}} из {{.TotalCount}}</span></div>
+    <div class="bar"><span style="width:{{percentValue .Completion}}%"></span></div>
+  </div>
+  {{else}}
   <div class="prob-row">
     <span class="prob-base">{{percent .Base}}</span> →
     <span class="prob-now">{{percent .Current}}</span>
-    {{if .Improved}}<span class="badge good">{{printf "%+.1f" .DeltaPoints}} п.п.</span>
-    {{else if ne .DeltaPoints 0.0}}<span class="badge bad">{{printf "%+.1f" .DeltaPoints}} п.п.</span>
-    {{else}}<span class="badge flat">без изменений</span>{{end}}
   </div>
   <div class="progress">
     <div class="progress-label"><span>Выполнено действий</span><span>{{.DoneCount}} из {{.TotalCount}}</span></div>
     <div class="bar"><span style="width:{{.ProgressPercent}}%"></span></div>
   </div>
+  {{end}}
 </a>
 {{end}}
 {{end}}
@@ -28,17 +36,21 @@
 <details class="panel">
   <summary>Новый кейс</summary>
   <form class="grid" method="post" action="/cases">
-    <label>Название <input name="title" required></label>
     <label>Тип
-      <select name="kind">
+      <select name="kind" required onchange="toggleKindFields(this)">
+        <option value="" selected disabled>выбери: риск или стремление</option>
         <option value="risk">Риск</option>
         <option value="aspiration">Стремление</option>
       </select>
     </label>
+    <label>Название <input name="title" required></label>
     <label>Категория <input name="category" placeholder="здоровье, деньги…"></label>
     <label>Период <input name="horizon" placeholder="5 лет" required></label>
-    <label>Базовая вероятность, % <input name="base_probability" placeholder="8" required></label>
-    <label>Откуда цифра <input name="base_source"></label>
+    <label data-kind="risk" hidden>Вероятность, что случится, % <input name="base_probability" placeholder="30" required disabled></label>
+    <label data-kind="risk" hidden>Откуда цифра <input name="base_source" disabled></label>
+    <div data-kind="aspiration" class="hint" hidden style="grid-column:1/-1">
+      Стремление начинается с 0% выполнения. Цель — 100%: у каждого действия будет вес, выполненные действия добавляют свой вес.
+    </div>
     <label style="grid-column:1/-1">Описание для нейросети
       <textarea name="description" rows="3" placeholder="Подробности: обстоятельства, что уже пробовал, ограничения. Можно оставить пустым."></textarea>
     </label>
@@ -88,8 +100,8 @@
 {{else}}
 <form hx-post="/risks/apply" hx-target="#risks-apply-status">
   <textarea name="reply" hidden>{{.RawReply}}</textarea>
-  <p class="muted">Отмеченные риски добавятся как новые кейсы. Оценки действий сохранятся как оценки нейросети:
-    в расчёт они попадут после «Принять как мою».</p>
+  <p class="muted">Отмеченные риски добавятся как новые кейсы. Веса действий сохранятся как оценки нейросети:
+    в расчёт они попадут после «Принять».</p>
   <table>
     <tr><th></th><th>Риск</th><th>База</th><th>Действия</th></tr>
     {{range .Rows}}
@@ -104,7 +116,7 @@
       <td>{{optNum .BaseProbabilityPercent}}%<div class="muted">{{.BaseSource}}</div></td>
       <td>
         <ul class="sublist">
-          {{range .Actions}}<li>{{.Title}} · {{pctLabel .EffectPercent}} · {{.Confidence}}</li>{{end}}
+          {{range .Actions}}<li>{{.Title}} · вес {{pctLabel .Weight}} · {{.Confidence}}</li>{{end}}
         </ul>
       </td>
     </tr>

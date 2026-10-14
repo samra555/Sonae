@@ -33,23 +33,40 @@
     </div>
     <h1>{{.Case.Title}}</h1>
     {{if .Case.Description}}<div class="description">{{.Case.Description}}</div>{{end}}
+    {{if .Case.IsAspiration}}
+    <div class="prob-row">
+      <span class="prob-now">{{percent .Completion}}</span>
+      <span class="prob-base">выполнено из 100%</span>
+    </div>
+    <div class="progress">
+      <div class="progress-label"><span>Выполнено действий</span><span>{{.Case.DoneCount}} из {{len .Actions}}</span></div>
+      <div class="bar"><span style="width:{{percentValue .Completion}}%"></span></div>
+    </div>
+    {{if .WeightSumOff}}<p class="hint warn">⚠ Сумма весов действий {{numStr .WeightSum}}%, а должна быть 100%: иначе 100% не набрать или будет перебор.</p>{{end}}
+    {{else}}
     <div class="prob-row">
       <span class="prob-base">{{percent .Case.BaseProbability}}</span> →
       <span class="prob-now">{{percent .Current}}</span>
-      {{if .Case.Improved}}<span class="badge good">{{printf "%+.1f" .Case.DeltaPoints}} п.п.</span>
-      {{else if ne .Case.DeltaPoints 0.0}}<span class="badge bad">{{printf "%+.1f" .Case.DeltaPoints}} п.п.</span>
-      {{else}}<span class="badge flat">без изменений</span>{{end}}
     </div>
     <div class="muted">база: {{if .Case.BaseSource}}{{.Case.BaseSource}}{{else}}источник не указан{{end}}</div>
     <div class="progress">
       <div class="progress-label"><span>Выполнено действий</span><span>{{.Case.DoneCount}} из {{len .Actions}}</span></div>
       <div class="bar"><span style="width:{{.Case.ProgressPercent}}%"></span></div>
     </div>
+    {{end}}
   </div>
 
   {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
 
-  <div class="actions-title"><h2>Действия</h2><span class="muted">сверху те, что сильнее всего двигают вероятность в нужную сторону</span></div>
+  <div class="actions-title">
+    <h2>Действия</h2>
+    <span class="muted">{{if .Case.IsAspiration}}сверху самые весомые{{else}}сверху те, что сильнее всего снижают риск{{end}}
+      {{if .CanAcceptAny}}
+      <button class="mini" hx-post="/cases/{{.Case.ID}}/accept-all" hx-target="#case-body" hx-swap="outerHTML"
+              hx-confirm="Заменить свои веса весами нейросети у всех действий, где они есть?">Принять все веса нейросети</button>
+      {{end}}
+    </span>
+  </div>
   {{range .Actions}}
   {{$actionID := .ID}}
   <div class="action {{if .Done}}done{{end}} {{if .Blocked}}blocked{{end}}">
@@ -61,14 +78,14 @@
     </div>
     <div>
       <div class="action-title">{{.Title}}<code>{{.ID}}</code></div>
-      {{if not .MyMultiplier}}<div class="chips"><span>нет оценки: задай «Мою прикидку»</span></div>{{end}}
+      {{if not .Weight}}<div class="chips"><span>нет веса: задай «Вес действия» в «изменить»</span></div>{{end}}
       {{if .BlockReason}}<div class="hint">🔒 {{.BlockReason}}</div>{{end}}
       {{if .OverlapTitles}}<div class="hint warn">⚠ пересекается: {{join .OverlapTitles ", "}}</div>{{end}}
-      {{if .LLMPercent}}
-      <div class="hint">🤖 нейросеть: {{pctLabel .LLMPercent}}{{if .Confidence}} · {{.Confidence}}{{end}}
+      {{if .LLMWeight}}
+      <div class="hint">🤖 нейросеть: вес {{weightLabel $.Case.Kind .LLMWeight}}{{if .Confidence}} · {{.Confidence}}{{end}}
         {{if .CanAccept}}
         <form class="link-add" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/accept" hx-target="#case-body" hx-swap="outerHTML">
-          <button class="mini">Принять как мою</button>
+          <button class="mini">Принять</button>
         </form>
         {{end}}
       </div>
@@ -102,14 +119,11 @@
       <details class="inline-details"><summary>изменить</summary>
         <form class="grid edit-form" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/update" hx-target="#case-body" hx-swap="outerHTML">
           <label>Название <input name="title" value="{{.Title}}" required></label>
-          <label>Моя прикидка, %
-            <input name="effect_percent" value="{{optNum .MyPercent}}" placeholder="−10"
-                   data-base="{{$.Case.BaseProbability}}" oninput="previewEffect(this)">
-          </label>
+          {{template "weight-input" (weightInput $.Case .Weight)}}
           <div><button class="primary">Сохранить</button></div>
           <div class="preview" style="grid-column:1/-1"></div>
         </form>
-        <div class="hint">Во сколько процентов действие меняет вероятность: −10 снижает на 10%, +30 повышает на 30%. Пусто: оценки нет.</div>
+        {{template "weight-hint" $.Case}}
 
         <div class="links">
           <div class="link-row">
@@ -166,8 +180,8 @@
       {{end}}
     </div>
     <div class="effect">
-      <div class="mult">{{pctLabel .MyPercent}}</div>
-      {{if .DeltaPoints}}<span class="badge {{if .Good}}good{{else}}bad{{end}}">{{deltaPoints .DeltaPoints}}</span>{{end}}
+      <div class="mult">{{weightLabel $.Case.Kind .Weight}}</div>
+      <div class="muted">вес</div>
     </div>
   </div>
   {{else}}
@@ -178,29 +192,33 @@
     <summary>Добавить действие</summary>
     <form class="grid" hx-post="/cases/{{.Case.ID}}/actions" hx-target="#case-body" hx-swap="outerHTML">
       <label>Действие <input name="title" required></label>
-      <label>Моя прикидка, %
-        <input name="effect_percent" placeholder="−10" data-base="{{.Case.BaseProbability}}" oninput="previewEffect(this)">
-      </label>
+      {{template "weight-input" (weightInput .Case nil)}}
       <div><button class="primary">Добавить</button></div>
       <div class="preview" style="grid-column:1/-1"></div>
     </form>
-    <div class="hint">−10 снижает вероятность на 10%, +30 повышает на 30%. Связи с другими действиями задаются позже, в «изменить».</div>
+    {{template "weight-hint" .Case}}
+    <div class="hint">Связи с другими действиями и шаги задаются позже, у самого действия.</div>
   </details>
 
   <details class="panel">
     <summary>Изменить кейс</summary>
     <form class="grid" hx-post="/cases/{{.Case.ID}}/update" hx-target="#case-body" hx-swap="outerHTML">
-      <label>Название <input name="title" value="{{.Case.Title}}" required></label>
       <label>Тип
-        <select name="kind">
+        <select name="kind" onchange="toggleKindFields(this)">
           <option value="risk" {{if eq .Case.Kind "risk"}}selected{{end}}>Риск</option>
           <option value="aspiration" {{if eq .Case.Kind "aspiration"}}selected{{end}}>Стремление</option>
         </select>
       </label>
+      <label>Название <input name="title" value="{{.Case.Title}}" required></label>
       <label>Категория <input name="category" value="{{.Case.Category}}"></label>
       <label>Период <input name="horizon" value="{{.Case.Horizon}}" required></label>
-      <label>База, % <input name="base_probability" value="{{percentValue .Case.BaseProbability}}" required></label>
-      <label>Откуда цифра <input name="base_source" value="{{.Case.BaseSource}}"></label>
+      <label data-kind="risk" {{if .Case.IsAspiration}}hidden{{end}}>Вероятность, что случится, %
+        <input name="base_probability" value="{{percentValue .Case.BaseProbability}}" required {{if .Case.IsAspiration}}disabled{{end}}></label>
+      <label data-kind="risk" {{if .Case.IsAspiration}}hidden{{end}}>Откуда цифра
+        <input name="base_source" value="{{.Case.BaseSource}}" {{if .Case.IsAspiration}}disabled{{end}}></label>
+      <div data-kind="aspiration" class="hint" {{if not .Case.IsAspiration}}hidden{{end}} style="grid-column:1/-1">
+        Стремление считается от 0% до 100% выполнения по весам действий. Веса рисков тут не подойдут: их придётся задать заново.
+      </div>
       <label style="grid-column:1/-1">Описание для нейросети
         <textarea name="description" rows="4" placeholder="Подробности: обстоятельства, что уже пробовал, ограничения. Можно оставить пустым.">{{.Case.Description}}</textarea>
       </label>
@@ -212,21 +230,41 @@
 </div>
 {{end}}
 
+{{define "weight-input"}}
+<label>Вес действия, %
+  {{if .Case.IsAspiration}}
+  <input name="weight" value="{{optNum .Weight}}" placeholder="25">
+  {{else}}
+  <input name="weight" value="{{optNum .Weight}}" placeholder="−10" data-base="{{.Case.BaseProbability}}" oninput="previewWeight(this)">
+  {{end}}
+</label>
+{{end}}
+
+{{define "weight-hint"}}
+{{if .IsAspiration}}
+<div class="hint">Какую долю цели даёт действие, от 0 до 100. Веса всех действий в сумме должны дать 100. Пусто: вес не задан.</div>
+{{else}}
+<div class="hint">На сколько процентных пунктов действие меняет вероятность: −10 значит 30% → 20%. Пусто: вес не задан.</div>
+{{end}}
+{{end}}
+
 {{define "import-preview"}}
 {{if .Error}}
 <p class="notice">{{.Error}}</p>
 {{else}}
 <form hx-post="/cases/{{.CaseID}}/apply" hx-target="#case-body" hx-swap="outerHTML">
   <textarea name="reply" hidden>{{.RawReply}}</textarea>
-  <p class="muted">Оценка нейросети сохранится рядом с твоей. В расчёт она не попадёт, пока ты не нажмёшь «Принять как мою» у действия.</p>
+  <p class="muted">Вес нейросети сохранится рядом с твоим. В расчёт он не попадёт, пока ты не нажмёшь «Принять» у действия
+    (или «Принять все веса нейросети»).</p>
+  {{$kind := .Kind}}
   <table>
-    <tr><th></th><th>Действие</th><th>Моя прикидка</th><th>Нейросеть</th><th>Обоснование</th></tr>
+    <tr><th></th><th>Действие</th><th>Мой вес</th><th>Нейросеть</th><th>Обоснование</th></tr>
     {{range .Rows}}
     <tr>
       <td>{{if .Applicable}}<input type="checkbox" name="apply" value="{{.ActionID}}" checked>{{end}}</td>
       <td>{{.Title}}</td>
-      <td>{{pctLabel .MyPercent}}</td>
-      <td>{{pctLabel .Estimate.EffectPercent}}<div class="muted">{{.Estimate.Confidence}}</div></td>
+      <td>{{weightLabel $kind .MyWeight}}</td>
+      <td>{{weightLabel $kind .Estimate.Weight}}<div class="muted">{{.Estimate.Confidence}}</div></td>
       <td class="muted">{{.Estimate.Reasoning}}{{range .Estimate.Sources}}<div>· {{.}}</div>{{end}}</td>
     </tr>
     {{if .Estimate.SuggestedSteps}}
@@ -253,13 +291,13 @@
       <td>{{.Title}}<div class="muted">{{.Reasoning}}</div>
         {{if .SuggestedSteps}}<ol class="sublist">{{range .SuggestedSteps}}<li>{{.}}</li>{{end}}</ol>{{end}}
       </td>
-      <td>{{pctLabel .EffectPercent}}<div class="muted">{{.Confidence}}</div></td>
+      <td>вес {{weightLabel $kind .Weight}}<div class="muted">{{.Confidence}}</div></td>
     </tr>
     {{end}}
   </table>
   {{end}}
 
-  {{if .Comment}}<p class="muted">Про базовую вероятность: {{.Comment}}</p>{{end}}
+  {{if .Comment}}<p class="muted">Комментарий нейросети: {{.Comment}}</p>{{end}}
   <p><button class="primary">Применить выбранное</button></p>
 </form>
 {{end}}

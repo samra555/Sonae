@@ -1,47 +1,62 @@
 package main
 
 import (
-	"math"
+	"errors"
 	"strings"
 )
 
-// An effect of -10 (percent) is stored as the multiplier 0.9, and +30 as 1.3.
+// An action's weight is a percent, but its meaning depends on the case:
+//   - risk: percentage points of the probability; -10 turns 30% into 20%;
+//   - aspiration: the share of the goal; the weights of all actions add up to 100.
 const (
-	minEffectPercent = (minMultiplier - 1) * 100
-	maxEffectPercent = (maxMultiplier - 1) * 100
+	minRiskWeight       = -100.0
+	maxRiskWeight       = 100.0
+	minAspirationWeight = 0.0
+	maxAspirationWeight = 100.0
 )
 
-func validEffectPercent(effectPercent *float64) bool {
-	if effectPercent == nil {
+func weightRange(kind Kind) (float64, float64) {
+	if kind == KindAspiration {
+		return minAspirationWeight, maxAspirationWeight
+	}
+	return minRiskWeight, maxRiskWeight
+}
+
+func validWeight(kind Kind, weight *float64) bool {
+	if weight == nil {
 		return true
 	}
-	return *effectPercent >= minEffectPercent && *effectPercent <= maxEffectPercent
+	minWeight, maxWeight := weightRange(kind)
+	return *weight >= minWeight && *weight <= maxWeight
 }
 
-func multiplierFromPercent(effectPercent *float64) *float64 {
-	if effectPercent == nil {
-		return nil
+func weightError(kind Kind) error {
+	if kind == KindAspiration {
+		return errors.New("вес: число от 0 до 100, например 25")
 	}
-	multiplier := math.Round((1+*effectPercent/100)*1e6) / 1e6
-	return &multiplier
-}
-
-func optionalPercent(multiplier *float64) *float64 {
-	if multiplier == nil {
-		return nil
-	}
-	effectPercent := math.Round((*multiplier-1)*100*1e4) / 1e4
-	return &effectPercent
+	return errors.New("вес: число от −100 до 100, например −10")
 }
 
 // pctLabel renders a percent for display: +30%, −10%, or a dash when there is no value.
-func pctLabel(effectPercent *float64) string {
-	if effectPercent == nil {
+func pctLabel(percent *float64) string {
+	if percent == nil {
 		return "—"
 	}
-	label := numStr(*effectPercent)
-	if *effectPercent > 0 {
+	label := numStr(*percent)
+	if *percent > 0 {
 		label = "+" + label
 	}
 	return strings.Replace(label, "-", "−", 1) + "%"
+}
+
+// weightLabel shows a risk weight with its sign (it moves the probability up or down)
+// and an aspiration weight without one (it is a share of the goal).
+func weightLabel(kind Kind, weight *float64) string {
+	if weight == nil {
+		return "—"
+	}
+	if kind == KindAspiration {
+		return numStr(*weight) + "%"
+	}
+	return pctLabel(weight)
 }

@@ -1,6 +1,7 @@
 :root{--bg:#242933;--panel:#2b313c;--card:#353c4a;--card2:#434c5e;--line:#4c566a;--text:#eceff4;--muted:#9aa5b8;
   --accent:#88c0d0;--good:#a3be8c;--bad:#bf616a;--warn:#ebcb8b;--risk:#d08770;--asp:#8fbcbb;--radius:12px}
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}

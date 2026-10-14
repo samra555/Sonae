@@ -7,14 +7,24 @@
 <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <link rel="stylesheet" href="/static/style.css">
 <script>
-function previewEffect(input){
+// A risk's weight is in percentage points: base 30% and weight -10 give 20%.
+function previewWeight(input){
   var out=input.closest('form').querySelector('.preview');
   var raw=input.value.split('−').join('-').split(',').join('.').split('%').join('').trim();
-  var percent=parseFloat(raw);
-  if(raw===''||isNaN(percent)){out.textContent='';return;}
-  var base=parseFloat(input.dataset.base);
-  var next=Math.min(Math.max(base*(1+percent*0.01),0),1);
-  out.textContent='Если выполнить только это действие: '+(base*100).toFixed(1)+'% → '+(next*100).toFixed(1)+'%';
+  var weight=parseFloat(raw);
+  if(raw===''||isNaN(weight)){out.textContent='';return;}
+  var base=parseFloat(input.dataset.base)*100;
+  var next=Math.min(Math.max(base+weight,0),100);
+  out.textContent='Если выполнить только это действие: '+base.toFixed(1)+'% → '+next.toFixed(1)+'%';
+}
+// Shows the fields of the chosen case kind; hidden inputs are disabled, so they are neither
+// required nor sent.
+function toggleKindFields(select){
+  select.closest('form').querySelectorAll('[data-kind]').forEach(function(field){
+    var shown=field.dataset.kind===select.value;
+    field.hidden=!shown;
+    field.querySelectorAll('input,textarea,select').forEach(function(input){input.disabled=!shown;});
+  });
 }
 </script>
 </head>

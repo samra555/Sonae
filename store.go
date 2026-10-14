@@ -1,8 +1,10 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sync"
 )
@@ -88,38 +90,56 @@ func writeJSONAtomically(path string, value any) error {
 	return os.Rename(temporaryPath, path)
 }
 
-// legacyData mirrors the fields of the old file format that Action no longer has.
+// legacyData mirrors the fields of older file formats that Action no longer has: first a single
+// "multiplier" with its source, later "my_multiplier" and "llm_multiplier".
 type legacyData struct {
 	Cases []struct {
-		Actions []struct {
+		Kind            Kind    `json:"kind"`
+		BaseProbability float64 `json:"base_probability"`
+		Actions         []struct {
 			Multiplier       *float64 `json:"multiplier"`
 			MultiplierSource string   `json:"multiplier_source"`
+			MyMultiplier     *float64 `json:"my_multiplier"`
+			LLMMultiplier    *float64 `json:"llm_multiplier"`
 		} `json:"actions"`
 	} `json:"cases"`
 }
 
-// migrateLegacyMultipliers moves an old "multiplier" into the new fields: a neural-net one becomes
-// the stored estimate, anything else becomes the user's own estimate (unless one is already set).
-// Files already in the new format have no such keys, so this does nothing for them.
+// migrateLegacyMultipliers turns the multipliers of older files into weights. For a risk the weight
+// is the same change at the base probability: base 10% and ×0.9 become −1 point, so current
+// probabilities stay as they were. An aspiration's multiplier has no weight equivalent (a weight
+// is a share of the goal there), so it is dropped. Files in the new format have no such keys.
 func migrateLegacyMultipliers(rawBytes []byte, data *Data) error {
 	var legacy legacyData
 	if err := json.Unmarshal(rawBytes, &legacy); err != nil {
 		return err
 	}
 	for caseIndex, legacyCase := range legacy.Cases {
+		if legacyCase.Kind != KindRisk {
+			continue
+		}
 		for actionIndex, legacyAction := range legacyCase.Actions {
-			if legacyAction.Multiplier == nil {
-				continue
+			myMultiplier, llmMultiplier := legacyAction.MyMultiplier, legacyAction.LLMMultiplier
+			if legacyAction.Multiplier != nil {
+				if legacyAction.MultiplierSource == "нейросеть" {
+					llmMultiplier = cmp.Or(llmMultiplier, legacyAction.Multiplier)
+				} else {
+					myMultiplier = cmp.Or(myMultiplier, legacyAction.Multiplier)
+				}
 			}
+
 			action := &data.Cases[caseIndex].Actions[actionIndex]
-			if legacyAction.MultiplierSource == "нейросеть" {
-				action.LLMMultiplier = legacyAction.Multiplier
-				continue
-			}
-			if action.MyMultiplier == nil {
-				action.MyMultiplier = legacyAction.Multiplier
-			}
+			action.Weight = cmp.Or(action.Weight, weightFromMultiplier(legacyCase.BaseProbability, myMultiplier))
+			action.LLMWeight = cmp.Or(action.LLMWeight, weightFromMultiplier(legacyCase.BaseProbability, llmMultiplier))
 		}
 	}
 	return nil
+}
+
+func weightFromMultiplier(baseProbability float64, multiplier *float64) *float64 {
+	if multiplier == nil {
+		return nil
+	}
+	weight := math.Round(baseProbability*(*multiplier-1)*100*100) / 100
+	return &weight
 }
