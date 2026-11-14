@@ -4,8 +4,8 @@
 <p><a href="/">← Все кейсы</a></p>
 {{template "case-body" .}}
 
-<section class="panel static-panel">
-  <h2>Оценка нейросетью</h2>
+<details class="panel">
+  <summary>Оценка нейросетью</summary>
   <ol class="steps">
     <li>Нажми «Сформировать промпт» и скопируй текст.</li>
     <li>Вставь его в нейросеть и дождись JSON-ответа.</li>
@@ -16,11 +16,11 @@
 
   <h2 style="margin-top:20px">Ответ нейросети</h2>
   <form hx-post="/cases/{{.Case.ID}}/import" hx-target="#import-result">
-    <textarea name="reply" rows="8" placeholder="Вставь сюда JSON-ответ"></textarea>
+    <textarea id="import-reply" name="reply" rows="8" placeholder="Вставь сюда JSON-ответ"></textarea>
     <p><button>Проверить ответ</button></p>
   </form>
   <div id="import-result"></div>
-</section>
+</details>
 {{end}}
 
 {{define "case-body"}}
@@ -252,6 +252,7 @@
 {{if .Error}}
 <p class="notice">{{.Error}}</p>
 {{else}}
+<textarea id="import-reply" name="reply" rows="8" placeholder="Вставь сюда JSON-ответ" hx-swap-oob="true"></textarea>
 <form hx-post="/cases/{{.CaseID}}/apply" hx-target="#case-body" hx-swap="outerHTML">
   <textarea name="reply" hidden>{{.RawReply}}</textarea>
   <p class="muted">Вес нейросети сохранится рядом с твоим. В расчёт он не попадёт, пока ты не нажмёшь «Принять» у действия

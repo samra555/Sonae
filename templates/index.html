@@ -74,7 +74,7 @@
   <div id="risks-prompt-box"></div>
 
   <form hx-post="/risks/import" hx-target="#risks-result" style="margin-top:14px">
-    <textarea name="reply" rows="8" placeholder="Вставь сюда JSON-ответ"></textarea>
+    <textarea id="risks-reply" name="reply" rows="8" placeholder="Вставь сюда JSON-ответ"></textarea>
     <p><button>Проверить ответ</button></p>
   </form>
   <div id="risks-result"></div>
@@ -98,6 +98,7 @@
 {{if .Error}}
 <p class="notice">{{.Error}}</p>
 {{else}}
+<textarea id="risks-reply" name="reply" rows="8" placeholder="Вставь сюда JSON-ответ" hx-swap-oob="true"></textarea>
 <form hx-post="/risks/apply" hx-target="#risks-apply-status">
   <textarea name="reply" hidden>{{.RawReply}}</textarea>
   <p class="muted">Отмеченные риски добавятся как новые кейсы. Веса действий сохранятся как оценки нейросети:
