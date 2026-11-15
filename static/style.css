@@ -80,6 +80,9 @@ button.danger{color:#e08a92;border-color:rgba(191,97,106,.6);background:transpar
 button.danger:hover{background:rgba(191,97,106,.15)}
 
 .case-head{margin-bottom:18px}
+.case-head-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.case-head-top .chips{margin-bottom:0}
+.case-head-top form{margin:0}
 .actions-title{display:flex;justify-content:space-between;align-items:baseline;margin:22px 0 8px}
 .action{display:grid;grid-template-columns:28px 1fr auto;gap:14px;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin:0 0 10px}
 .action.done{border-color:rgba(163,190,140,.55);background:#38413f}
@@ -91,6 +94,8 @@ button.danger:hover{background:rgba(191,97,106,.15)}
 .hint.warn{color:var(--warn)}
 .inline-details{margin-top:8px}
 .inline-details>summary{cursor:pointer;color:var(--accent);font-size:12px}
+.inline-details textarea{margin:6px 0 0}
+.inline-details form>div{margin:6px 0 0}
 .steps{display:grid;gap:6px;margin:0 0 14px;padding-left:20px;color:var(--muted);font-size:13px}
 .description{white-space:pre-wrap;margin:4px 0 8px;color:var(--text);font-size:14px}
 .checklist{display:grid;gap:4px;margin:8px 0 2px}

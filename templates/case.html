@@ -26,10 +26,16 @@
 {{define "case-body"}}
 <div id="case-body">
   <div class="case-head">
-    <div class="chips">
-      <span>{{if eq .Case.Kind "risk"}}Риск{{else}}Стремление{{end}}</span>
-      {{if .Case.Category}}<span>{{.Case.Category}}</span>{{end}}
-      <span>период: {{.Case.Horizon}}</span>
+    <div class="case-head-top">
+      <div class="chips">
+        <span>{{if eq .Case.Kind "risk"}}Риск{{else}}Стремление{{end}}</span>
+        {{if .Case.Category}}<span>{{.Case.Category}}</span>{{end}}
+        <span>период: {{.Case.Horizon}}</span>
+      </div>
+      <form hx-post="/cases/{{.Case.ID}}/delete" hx-confirm="Удалить кейс вместе со всеми действиями?"
+            hx-target="#case-body" hx-swap="outerHTML">
+        <button class="danger mini">Удалить кейс</button>
+      </form>
     </div>
     <h1>{{.Case.Title}}</h1>
     {{if .Case.Description}}<div class="description">{{.Case.Description}}</div>{{end}}
@@ -114,6 +120,14 @@
           <div><button class="mini">Добавить</button></div>
         </form>
         <div class="hint">Когда все шаги отмечены, действие отмечается выполненным само.</div>
+      </details>
+
+      <details class="inline-details"><summary>мои ответы{{if .Notes}} · сохранены{{end}}</summary>
+        <form hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/notes" hx-target="#case-body" hx-swap="outerHTML">
+          <textarea name="notes" rows="4" placeholder="Свои мысли, что получилось, что мешает. В промпт для нейросети не попадает.">{{.Notes}}</textarea>
+          <div><button class="mini">Сохранить</button></div>
+        </form>
+        <div class="hint">Хранится только у тебя: нейросеть эти заметки не видит.</div>
       </details>
 
       <details class="inline-details"><summary>изменить</summary>
@@ -224,8 +238,6 @@
       </label>
       <div><button class="primary">Сохранить</button></div>
     </form>
-    <button class="danger" hx-post="/cases/{{.Case.ID}}/delete" hx-confirm="Удалить кейс вместе со всеми действиями?"
-            hx-target="#case-body" hx-swap="outerHTML">Удалить кейс</button>
   </details>
 </div>
 {{end}}

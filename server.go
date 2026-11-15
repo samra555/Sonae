@@ -89,6 +89,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /cases/{id}/update", s.handleUpdateCase)
 	mux.HandleFunc("POST /cases/{id}/delete", s.handleDeleteCase)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/update", s.handleUpdateAction)
+	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/notes", s.handleSaveNotes)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/delete", s.handleDeleteAction)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/links", s.handleLinks)
 	mux.HandleFunc("POST /cases/{id}/actions/{actionID}/accept", s.handleAcceptEstimate)

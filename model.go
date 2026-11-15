@@ -55,6 +55,9 @@ type Action struct {
 	// Weight is the only number used in the calculation; see percent.go for what it means.
 	Weight *float64 `json:"weight,omitempty"`
 
+	// Notes are the user's own answers for this action. They are stored but never sent to the neural net.
+	Notes string `json:"notes,omitempty"`
+
 	// The neural net's estimate is stored next to it, but never counted until the user accepts it.
 	LLMWeight    *float64 `json:"llm_weight,omitempty"`
 	Confidence   string   `json:"confidence,omitempty"`

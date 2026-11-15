@@ -177,6 +177,22 @@ func (s *Server) handleUpdateAction(w http.ResponseWriter, r *http.Request) {
 	s.renderCaseBody(w, r, caseID, noticeOf(err))
 }
 
+// handleSaveNotes stores the user's own notes on an action. They are never part of the prompt.
+func (s *Server) handleSaveNotes(w http.ResponseWriter, r *http.Request) {
+	caseID := r.PathValue("id")
+	actionID := r.PathValue("actionID")
+
+	err := storeOf(r).Update(func(data *Data) error {
+		action := data.findAction(actionID)
+		if action == nil {
+			return errActionNotFound
+		}
+		action.Notes = strings.TrimSpace(r.FormValue("notes"))
+		return nil
+	})
+	s.renderCaseBody(w, r, caseID, noticeOf(err))
+}
+
 func (s *Server) handleDeleteAction(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")
 	actionID := r.PathValue("actionID")
