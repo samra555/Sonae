@@ -1,0 +1,368 @@
+{{define "title"}}{{.Case.Title}}{{end}}
+
+{{define "content"}}
+<p><a href="/">← Все кейсы</a></p>
+{{template "case-body" .}}
+
+<details class="panel">
+  <summary>API AI</summary>
+  <ol class="steps">
+    <li>Нажми «Сформировать промпт» и скопируй текст.</li>
+    <li>Вставь его в нейросеть и дождись JSON-ответа.</li>
+    <li>Вставь ответ в поле ниже, проверь превью и примени нужные строки.</li>
+  </ol>
+  <button class="primary" hx-get="/cases/{{.Case.ID}}/prompt" hx-target="#prompt-box">Сформировать промпт</button>
+  <div id="prompt-box"></div>
+
+  <h2 style="margin-top:20px">Ответ нейросети</h2>
+  <form hx-post="/cases/{{.Case.ID}}/import" hx-target="#import-result">
+    <textarea id="import-reply" name="reply" rows="8" placeholder="Вставь сюда JSON-ответ"></textarea>
+    <p><button>Проверить ответ</button></p>
+  </form>
+  <div id="import-result"></div>
+</details>
+{{end}}
+
+{{define "case-body"}}
+<div id="case-body">
+  <div class="case-head">
+    <div class="case-head-top">
+      <div class="chips">
+        <span>{{if eq .Case.Kind "risk"}}Риск{{else}}Стремление{{end}}</span>
+        {{if .Case.Category}}<span>{{.Case.Category}}</span>{{end}}
+        <span>период: {{.Case.Horizon}}</span>
+      </div>
+      <form hx-post="/cases/{{.Case.ID}}/delete" hx-confirm="Удалить кейс вместе со всеми действиями?"
+            hx-target="#case-body" hx-swap="outerHTML">
+        <button class="danger mini">Удалить кейс</button>
+      </form>
+    </div>
+    <h1>{{.Case.Title}}</h1>
+    {{if .Case.Description}}<div class="description">{{.Case.Description}}</div>{{end}}
+    {{if .Case.IsAspiration}}
+    <div class="prob-row">
+      <span class="prob-now">{{percent .Completion}}</span>
+      <span class="prob-base">выполнено из 100%</span>
+    </div>
+    <div class="progress">
+      <div class="progress-label"><span>Выполнено действий</span><span>{{.Case.DoneCount}} из {{len .Actions}}</span></div>
+      <div class="bar"><span style="width:{{percentValue .Completion}}%"></span></div>
+    </div>
+    {{if .WeightSumOff}}<p class="hint warn">⚠ Сумма весов действий {{numStr .WeightSum}}%, а должна быть 100%: иначе 100% не набрать или будет перебор.</p>{{end}}
+    {{else}}
+    <div class="prob-row">
+      <span class="prob-base">{{percent .Case.BaseProbability}}</span> →
+      <span class="prob-now">{{percent .Current}}</span>
+    </div>
+    <div class="muted">база: {{if .Case.BaseSource}}{{.Case.BaseSource}}{{else}}источник не указан{{end}}</div>
+    <div class="progress">
+      <div class="progress-label"><span>Выполнено действий</span><span>{{.Case.DoneCount}} из {{len .Actions}}</span></div>
+      <div class="bar"><span style="width:{{.Case.ProgressPercent}}%"></span></div>
+    </div>
+    {{end}}
+  </div>
+
+  {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
+
+  <div class="actions-title">
+    <h2>Действия</h2>
+    <span class="muted">{{if .Case.IsAspiration}}сверху самые весомые{{else}}сверху те, что сильнее всего снижают риск{{end}}
+      {{if .CanAcceptAny}}
+      <button class="mini" hx-post="/cases/{{.Case.ID}}/accept-all" hx-target="#case-body" hx-swap="outerHTML"
+              hx-confirm="Заменить свои веса весами нейросети у всех действий, где они есть?">Принять все веса нейросети</button>
+      {{end}}
+    </span>
+  </div>
+  {{range .Actions}}
+  {{$actionID := .ID}}
+  <div class="action {{if .Done}}done{{end}} {{if .Blocked}}blocked{{end}}">
+    <div>
+      <input type="checkbox"
+             hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/toggle"
+             hx-target="#case-body" hx-swap="outerHTML"
+             {{if .Done}}checked{{end}} {{if .Blocked}}disabled{{end}}>
+    </div>
+    <div>
+      <div class="action-title">{{.Title}}<code>{{.ID}}</code></div>
+      {{if not .Weight}}<div class="chips"><span>нет веса: задай «Вес действия» в «изменить»</span></div>{{end}}
+      {{if .BlockReason}}<div class="hint">🔒 {{.BlockReason}}</div>{{end}}
+      {{if .OverlapTitles}}<div class="hint warn">⚠ пересекается: {{join .OverlapTitles ", "}}</div>{{end}}
+      {{if .LLMWeight}}
+      <div class="hint">🤖 нейросеть: вес {{weightLabel $.Case.Kind .LLMWeight}}{{if .Confidence}} · {{.Confidence}}{{end}}
+        {{if .CanAccept}}
+        <form class="link-add" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/accept" hx-target="#case-body" hx-swap="outerHTML">
+          <button class="mini">Принять</button>
+        </form>
+        {{end}}
+      </div>
+      {{end}}
+
+      {{if .Steps}}
+      <div class="checklist">
+        <div class="hint">Шаги: {{.DoneStepCount}} из {{len .Steps}}</div>
+        {{range $i, $step := .Steps}}
+        <div class="checklist-item {{if $step.Done}}done{{end}}">
+          <input type="checkbox"
+                 hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/steps/{{$step.ID}}/toggle"
+                 hx-target="#case-body" hx-swap="outerHTML"
+                 {{if $step.Done}}checked{{end}}>
+          <span><span class="step-num">{{inc $i}}.</span>{{$step.Title}}</span>
+          <form hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/steps/{{$step.ID}}/delete" hx-target="#case-body" hx-swap="outerHTML">
+            <button class="remove" title="удалить шаг">✕</button>
+          </form>
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+      <details class="inline-details"><summary>{{if .Steps}}добавить шаг{{else}}разбить на шаги{{end}}</summary>
+        <form class="step-add" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/steps" hx-target="#case-body" hx-swap="outerHTML">
+          <textarea name="titles" rows="3" placeholder="По одному шагу на строку" required></textarea>
+          <div><button class="mini">Добавить</button></div>
+        </form>
+        <div class="hint">Когда все шаги отмечены, действие отмечается выполненным само.</div>
+      </details>
+
+      <details class="inline-details"><summary>мои ответы{{if .Notes}} · сохранены{{end}}</summary>
+        <form hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/notes" hx-target="#case-body" hx-swap="outerHTML">
+          <textarea name="notes" rows="4" placeholder="Свои мысли, что получилось, что мешает. В промпт для нейросети не попадает.">{{.Notes}}</textarea>
+          <div><button class="mini">Сохранить</button></div>
+        </form>
+        <div class="hint">Хранится только у тебя: нейросеть эти заметки не видит.</div>
+      </details>
+
+      <details class="inline-details"><summary>изменить</summary>
+        <form class="grid edit-form" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/update" hx-target="#case-body" hx-swap="outerHTML">
+          <label>Название <input name="title" value="{{.Title}}" required></label>
+          {{template "weight-input" (weightInput $.Case .Weight)}}
+          <div><button class="primary">Сохранить</button></div>
+          <div class="preview" style="grid-column:1/-1"></div>
+        </form>
+        {{template "weight-hint" $.Case}}
+
+        <div class="links">
+          <div class="link-row">
+            <span class="muted">Сначала нужно выполнить:</span>
+            {{range .RequiresChips}}
+            <span class="chip-link">{{.Title}}
+              <form hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/links" hx-target="#case-body" hx-swap="outerHTML">
+                <input type="hidden" name="kind" value="requires"><input type="hidden" name="op" value="remove">
+                <input type="hidden" name="target" value="{{.ID}}"><button title="убрать связь">✕</button>
+              </form>
+            </span>
+            {{end}}
+            {{if .RequiresOptions}}
+            <form class="link-add" hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/links" hx-target="#case-body" hx-swap="outerHTML">
+              <input type="hidden" name="kind" value="requires"><input type="hidden" name="op" value="add">
+              <select name="target"><option value="">выбери действие…</option>
+                {{range .RequiresOptions}}<optgroup label="{{.Title}}">{{range .Actions}}<option value="{{.ID}}">{{.Title}}</option>{{end}}</optgroup>{{end}}
+              </select>
+              <button class="mini">Добавить</button>
+            </form>
+            {{end}}
+          </div>
+          <div class="link-row">
+            <span class="muted">Нельзя вместе с:</span>
+            {{range .ExcludesChips}}
+            <span class="chip-link">{{.Title}}
+              <form hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/links" hx-target="#case-body" hx-swap="outerHTML">
+                <input type="hidden" name="kind" value="excludes"><input type="hidden" name="op" value="remove">
+                <input type="hidden" name="target" value="{{.ID}}"><button title="убрать связь">✕</button>
+              </form>
+            </span>
+            {{end}}
+            {{if .ExcludesOptions}}
+            <form class="link-add" hx-post="/cases/{{$.Case.ID}}/actions/{{$actionID}}/links" hx-target="#case-body" hx-swap="outerHTML">
+              <input type="hidden" name="kind" value="excludes"><input type="hidden" name="op" value="add">
+              <select name="target"><option value="">выбери действие…</option>
+                {{range .ExcludesOptions}}<optgroup label="{{.Title}}">{{range .Actions}}<option value="{{.ID}}">{{.Title}}</option>{{end}}</optgroup>{{end}}
+              </select>
+              <button class="mini">Добавить</button>
+            </form>
+            {{end}}
+          </div>
+        </div>
+
+        <p><button class="danger" hx-post="/cases/{{$.Case.ID}}/actions/{{.ID}}/delete" hx-confirm="Удалить действие?"
+                hx-target="#case-body" hx-swap="outerHTML">Удалить действие</button></p>
+      </details>
+
+      {{if or .Reasoning .Sources}}
+      <details class="inline-details"><summary>обоснование нейросети</summary>
+        <div class="hint">{{.Reasoning}}</div>
+        {{range .Sources}}<div class="hint">· {{.}}</div>{{end}}
+      </details>
+      {{end}}
+
+      {{if .Steps}}
+      <details class="inline-details"><summary>уточнить шаг</summary>
+        <ol class="steps" style="margin-top:6px">
+          <li>Выбери шаг по номеру и нажми «Сформировать промпт».</li>
+          <li>Скопируй JSON, вставь в нейросеть.</li>
+          <li>Вставь ответ ниже — шаг разобьётся на под-шаги.</li>
+        </ol>
+        <label>Шаг
+          <select name="step" id="refine-step-{{$actionID}}">
+            <option value="">выбери шаг…</option>
+            {{range $i, $step := .Steps}}
+            <option value="{{$actionID}}/{{$step.ID}}">шаг {{inc $i}}: {{$step.Title}}</option>
+            {{end}}
+          </select>
+        </label>
+        <p><button class="primary" hx-get="/cases/{{$.Case.ID}}/refine/prompt" hx-include="#refine-step-{{$actionID}}" hx-target="#refine-prompt-box-{{$actionID}}">Сформировать промпт</button></p>
+        <div id="refine-prompt-box-{{$actionID}}"></div>
+        <form hx-post="/cases/{{$.Case.ID}}/refine/import" hx-include="#refine-step-{{$actionID}}" hx-target="#refine-result-{{$actionID}}">
+          <textarea id="refine-reply-{{$actionID}}" name="reply" rows="6" placeholder="Вставь сюда JSON-ответ"></textarea>
+          <p><button type="submit">Проверить ответ</button></p>
+        </form>
+        <div id="refine-result-{{$actionID}}"></div>
+      </details>
+      {{end}}
+    </div>
+    <div class="effect">
+      <div class="mult">{{weightLabel $.Case.Kind .Weight}}</div>
+      <div class="muted">вес</div>
+    </div>
+  </div>
+  {{else}}
+  <div class="empty">Действий пока нет. Добавь первое ниже.</div>
+  {{end}}
+
+  <details class="panel">
+    <summary>Добавить действие</summary>
+    <form class="grid" hx-post="/cases/{{.Case.ID}}/actions" hx-target="#case-body" hx-swap="outerHTML">
+      <label>Действие <input name="title" required></label>
+      {{template "weight-input" (weightInput .Case nil)}}
+      <div><button class="primary">Добавить</button></div>
+      <div class="preview" style="grid-column:1/-1"></div>
+    </form>
+    {{template "weight-hint" .Case}}
+    <div class="hint">Связи с другими действиями и шаги задаются позже, у самого действия.</div>
+  </details>
+
+  <details class="panel">
+    <summary>Изменить кейс</summary>
+    <form class="grid" hx-post="/cases/{{.Case.ID}}/update" hx-target="#case-body" hx-swap="outerHTML">
+      <label>Тип
+        <select name="kind" onchange="toggleKindFields(this)">
+          <option value="risk" {{if eq .Case.Kind "risk"}}selected{{end}}>Риск</option>
+          <option value="aspiration" {{if eq .Case.Kind "aspiration"}}selected{{end}}>Стремление</option>
+        </select>
+      </label>
+      <label>Название <input name="title" value="{{.Case.Title}}" required></label>
+      <label>Категория <input name="category" value="{{.Case.Category}}"></label>
+      <label>Период <input name="horizon" value="{{.Case.Horizon}}" required></label>
+      <label data-kind="risk" {{if .Case.IsAspiration}}hidden{{end}}>Вероятность, что случится, %
+        <input name="base_probability" value="{{percentValue .Case.BaseProbability}}" required {{if .Case.IsAspiration}}disabled{{end}}></label>
+      <label data-kind="risk" {{if .Case.IsAspiration}}hidden{{end}}>Откуда цифра
+        <input name="base_source" value="{{.Case.BaseSource}}" {{if .Case.IsAspiration}}disabled{{end}}></label>
+      <div data-kind="aspiration" class="hint" {{if not .Case.IsAspiration}}hidden{{end}} style="grid-column:1/-1">
+        Стремление считается от 0% до 100% выполнения по весам действий. Веса рисков тут не подойдут: их придётся задать заново.
+      </div>
+      <label style="grid-column:1/-1">Описание для нейросети
+        <textarea name="description" rows="4" placeholder="Подробности: обстоятельства, что уже пробовал, ограничения. Можно оставить пустым.">{{.Case.Description}}</textarea>
+      </label>
+      <div><button class="primary">Сохранить</button></div>
+    </form>
+  </details>
+</div>
+{{end}}
+
+{{define "weight-input"}}
+<label>Вес действия, %
+  {{if .Case.IsAspiration}}
+  <input name="weight" value="{{optNum .Weight}}" placeholder="25">
+  {{else}}
+  <input name="weight" value="{{optNum .Weight}}" placeholder="−10" data-base="{{.Case.BaseProbability}}" oninput="previewWeight(this)">
+  {{end}}
+</label>
+{{end}}
+
+{{define "weight-hint"}}
+{{if .IsAspiration}}
+<div class="hint">Какую долю цели даёт действие, от 0 до 100. Веса всех действий в сумме должны дать 100. Пусто: вес не задан.</div>
+{{else}}
+<div class="hint">На сколько процентных пунктов действие меняет вероятность: −10 значит 30% → 20%. Пусто: вес не задан.</div>
+{{end}}
+{{end}}
+
+{{define "import-preview"}}
+{{if .Error}}
+<p class="notice">{{.Error}}</p>
+{{else}}
+<textarea id="import-reply" name="reply" rows="8" placeholder="Вставь сюда JSON-ответ" hx-swap-oob="true"></textarea>
+<form hx-post="/cases/{{.CaseID}}/apply" hx-target="#case-body" hx-swap="outerHTML">
+  <textarea name="reply" hidden>{{.RawReply}}</textarea>
+  <p class="muted">Вес нейросети сохранится рядом с твоим. В расчёт он не попадёт, пока ты не нажмёшь «Принять» у действия
+    (или «Принять все веса нейросети»).</p>
+  {{$kind := .Kind}}
+  <table>
+    <tr><th></th><th>Действие</th><th>Мой вес</th><th>Нейросеть</th><th>Обоснование</th></tr>
+    {{range .Rows}}
+    <tr>
+      <td>{{if .Applicable}}<input type="checkbox" name="apply" value="{{.ActionID}}" checked>{{end}}</td>
+      <td>{{.Title}}</td>
+      <td>{{weightLabel $kind .MyWeight}}</td>
+      <td>{{weightLabel $kind .Estimate.Weight}}<div class="muted">{{.Estimate.Confidence}}</div></td>
+      <td class="muted">{{.Estimate.Reasoning}}{{range .Estimate.Sources}}<div>· {{.}}</div>{{end}}</td>
+    </tr>
+    {{if .Estimate.SuggestedSteps}}
+    {{$rowActionID := .ActionID}}
+    <tr>
+      <td></td>
+      <td colspan="4">
+        <div class="muted">Предложенные шаги (добавятся в чеклист, существующие не изменятся):</div>
+        {{range $stepIndex, $stepTitle := .Estimate.SuggestedSteps}}
+        <label class="check"><input type="checkbox" name="step" value="{{stepKey $rowActionID $stepIndex}}" checked> {{$stepTitle}}</label>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+    {{end}}
+  </table>
+
+  {{if .Suggested}}
+  <h2 style="margin-top:16px">Предложенные действия</h2>
+  <table>
+    {{range .Suggested}}
+    <tr>
+      <td><input type="checkbox" name="add" value="{{.Index}}"></td>
+      <td>{{.Title}}<div class="muted">{{.Reasoning}}</div>
+        {{if .SuggestedSteps}}<ol class="sublist">{{range .SuggestedSteps}}<li>{{.}}</li>{{end}}</ol>{{end}}
+      </td>
+      <td>вес {{weightLabel $kind .Weight}}<div class="muted">{{.Confidence}}</div></td>
+    </tr>
+    {{end}}
+  </table>
+  {{end}}
+
+  {{if .Comment}}<p class="muted">Комментарий нейросети: {{.Comment}}</p>{{end}}
+  <p><button class="primary">Применить выбранное</button></p>
+</form>
+{{end}}
+{{end}}
+
+{{define "refine-prompt-box"}}
+<div class="prompt-box">
+  <p class="muted">Промпт готов: скопируй и вставь в нейросеть.</p>
+  <textarea id="refine-prompt-text-{{.ActionID}}" rows="12" readonly>{{.Prompt}}</textarea>
+  <button class="copy-icon" type="button" onclick="copyPrompt(this)" title="Скопировать весь текст" aria-label="Скопировать">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg>
+  </button>
+</div>
+{{end}}
+
+{{define "refine-preview"}}
+{{if .Error}}
+<p class="notice">{{.Error}}</p>
+{{else}}
+<form hx-post="/cases/{{.CaseID}}/refine/apply" hx-target="#case-body" hx-swap="outerHTML">
+  <input type="hidden" name="step" value="{{.ActionID}}/{{.StepID}}">
+  <textarea name="reply" hidden>{{.RawReply}}</textarea>
+  <p class="muted">Выбери под-шаги, которые добавить вместо выбранного шага:</p>
+  {{range $i, $step := .Steps}}
+  <label class="check"><input type="checkbox" name="keep" value="{{$i}}" checked> {{$step}}</label>
+  {{end}}
+  <p><button class="primary">Разбить шаг</button></p>
+</form>
+{{end}}
+{{end}}
